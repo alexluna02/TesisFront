@@ -1,0 +1,43 @@
+/* Estilos para la página de Historial */
+
+/* Animaciones suaves para las tarjetas */
+.historial-page {
+  background-image: url('./Imagenes/foto2.jpg');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+
+.historial-card {
+  transition: all 0.3s ease;
+}
+
+.historial-card:hover {
+  transform: translateY(-2px);
+}
+
+/* Estilos para barras de progreso */
+.progress-bar {
+  height: 6px;
+  border-radius: 9999px;
+  background: linear-gradient(to right, #10b981, #059669);
+  transition: width 0.3s ease;
+}
+
+/* Animación suave para elementos */
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Scroll suave */
+html {
+  scroll-behavior: smooth;
+}
