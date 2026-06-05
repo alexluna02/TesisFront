@@ -1,4 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { deleteAnalisis } from './api.js'
+import { exportAnalisisPDF } from './exportPDF.js'
+import { useTheme } from './ThemeContext.jsx'
 
 // ── Risk styles ───────────────────────────────────────────────────────────────
 
@@ -46,40 +49,72 @@ const IcoClock = () => (
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Historial({ history = [], onHistoryChange }) {
-  const [items,    setItems]    = useState(history)
-  const [filter,   setFilter]   = useState('todos')
-  const [expanded, setExpanded] = useState(null)
-  const [copied,   setCopied]   = useState(null)
+  const { isDark } = useTheme()
+  const [items,      setItems]      = useState(history)
+  const [search,     setSearch]     = useState('')
+  const [filterEstado, setFilterEstado] = useState('todos')
+  const [filterRiesgo, setFilterRiesgo] = useState('todos')
+  const [expanded,   setExpanded]   = useState(null)
+  const [copied,     setCopied]     = useState(null)
+  const [exportingIdx, setExportingIdx] = useState(null)
 
-  useEffect(() => {
-    setItems(history)
-  }, [history])
+  useEffect(() => { setItems(history) }, [history])
 
-  const filtered = filter === 'todos'
-    ? items
-    : items.filter(i => i.estado === filter)
+  const filtered = useMemo(() => {
+    return items.filter(i => {
+      const matchSearch = search.trim() === '' ||
+        (i.enfermedadLabel ?? i.enfermedad ?? '').toLowerCase().includes(search.trim().toLowerCase())
+      const matchEstado = filterEstado === 'todos' || i.estado === filterEstado
+      const matchRiesgo = filterRiesgo === 'todos' || i.riesgo === filterRiesgo
+      return matchSearch && matchEstado && matchRiesgo
+    })
+  }, [items, search, filterEstado, filterRiesgo])
 
-  const remove = (idx) => {
+  const remove = async (idx) => {
+    const item = items[idx]
+    if (!item?.id) return
+    try {
+      await deleteAnalisis(item.id)
+    } catch {
+      // ignore backend deletion errors and still remove from UI
+    }
     const next = items.filter((_, i) => i !== idx)
     setItems(next)
-    localStorage.setItem('analysisHistory', JSON.stringify(next))
     if (typeof onHistoryChange === 'function') onHistoryChange(next)
     if (expanded === idx) setExpanded(null)
   }
 
-  const clearAll = () => {
+  const clearAll = async () => {
     if (!window.confirm('¿Eliminar todo el historial de análisis?')) return
+    const idsToDelete = items.map((item) => item.id).filter(Boolean)
+    await Promise.all(idsToDelete.map((id) => deleteAnalisis(id).catch(() => null)))
     setItems([])
-    localStorage.setItem('analysisHistory', '[]')
     if (typeof onHistoryChange === 'function') onHistoryChange([])
     setExpanded(null)
+  }
+
+  const handleExportPDF = async (item, idx) => {
+    setExportingIdx(idx)
+    try {
+      await exportAnalisisPDF({
+        diseaseLabel:    item.enfermedadLabel ?? item.enfermedad,
+        affectedPercent: (item.confianza * 100).toFixed(1),
+        risk:            item.riesgo,
+        fecha:           item.fecha,
+        originalImg:     item.imagen   ?? null,
+        xaiImg:          item.xaiImage ?? null,
+        recommendations: item.recomendaciones ? [{ body: item.recomendaciones }] : [],
+      })
+    } finally {
+      setExportingIdx(null)
+    }
   }
 
   const copy = async (item, idx) => {
     const text = [
       `Diagnóstico: ${item.enfermedadLabel ?? item.enfermedad}`,
       `Riesgo: ${item.riesgo}`,
-      `Confianza: ${(item.confianza * 100).toFixed(1)}%`,
+      `Área afectada: ${(item.confianza * 100).toFixed(1)}%`,
       `Fecha: ${new Date(item.fecha).toLocaleString('es-ES')}`,
       `Recomendaciones: ${item.recomendaciones}`,
     ].join('\n')
@@ -99,50 +134,84 @@ export default function Historial({ history = [], onHistoryChange }) {
       {total > 0 && (
         <div className="grid grid-cols-3 gap-4">
           {[
-            { label: 'Total análisis',  value: total,    color: '#0f172a' },
+            { label: 'Total análisis',  value: total,    color: isDark ? '#e2e8f0' : '#0f172a' },
             { label: 'Cultivos sanos',  value: sanos,    color: '#15803d' },
             { label: 'Con enfermedad',  value: enfermos, color: '#b91c1c' },
           ].map((s, i) => (
-            <div key={i} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm text-center">
+            <div key={i} className={`rounded-2xl border p-5 shadow-sm text-center ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
               <p className="text-3xl font-black" style={{ color: s.color }}>{s.value}</p>
-              <p className="text-sm text-slate-500 mt-1">{s.label}</p>
+              <p className={`text-sm mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{s.label}</p>
             </div>
           ))}
         </div>
       )}
 
       {/* ── Controls ────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-2">
+      <div className={`rounded-2xl border shadow-sm p-4 space-y-3 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
+        {/* Search */}
+        <div className="relative">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none">
+            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+          </svg>
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar por enfermedad…"
+            className={`w-full rounded-xl border pl-10 pr-4 py-2.5 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition ${isDark ? 'bg-[#0e1929] border-[#1e3048] text-slate-200 placeholder:text-slate-600' : 'bg-slate-50 border-slate-200 text-slate-800'}`}
+          />
+          {search && (
+            <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3.5 h-3.5"><path d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          )}
+        </div>
+
+        {/* Filters row */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-slate-400 mr-1">Estado:</span>
           {[
             { id: 'todos',          label: 'Todos'          },
             { id: 'Sano',           label: 'Sanos'          },
             { id: 'Con enfermedad', label: 'Con enfermedad' },
           ].map(f => (
-            <button
-              key={f.id}
-              onClick={() => setFilter(f.id)}
-              className="rounded-full px-4 py-2 text-sm font-semibold transition-all"
-              style={filter === f.id
-                ? { background: '#15803d', color: 'white', boxShadow: '0 2px 8px rgba(21,128,61,0.25)' }
-                : { background: 'white', border: '1px solid #e2e8f0', color: '#64748b' }
+            <button key={f.id} onClick={() => setFilterEstado(f.id)}
+              className="rounded-full px-3 py-1.5 text-xs font-semibold transition-all"
+              style={filterEstado === f.id
+                ? { background: '#15803d', color: 'white' }
+                : { background: isDark ? '#0e1929' : '#f8fafc', border: `1px solid ${isDark ? '#1e3048' : '#e2e8f0'}`, color: isDark ? '#94a3b8' : '#64748b' }
               }
-            >
-              {f.label}
-            </button>
+            >{f.label}</button>
           ))}
-        </div>
 
-        {total > 0 && (
-          <button
-            onClick={clearAll}
-            className="inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold transition-all"
-            style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c' }}
-          >
-            <IcoTrash />
-            Limpiar todo
-          </button>
-        )}
+          <span className="text-xs font-semibold text-slate-400 ml-3 mr-1">Riesgo:</span>
+          {[
+            { id: 'todos', label: 'Todos' },
+            { id: 'Alto',  label: 'Alto'  },
+            { id: 'Medio', label: 'Medio' },
+            { id: 'Bajo',  label: 'Bajo'  },
+          ].map(f => (
+            <button key={f.id} onClick={() => setFilterRiesgo(f.id)}
+              className="rounded-full px-3 py-1.5 text-xs font-semibold transition-all"
+              style={filterRiesgo === f.id
+                ? { background: '#7c3aed', color: 'white' }
+                : { background: isDark ? '#0e1929' : '#f8fafc', border: `1px solid ${isDark ? '#1e3048' : '#e2e8f0'}`, color: isDark ? '#94a3b8' : '#64748b' }
+              }
+            >{f.label}</button>
+          ))}
+
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs text-slate-400">{filtered.length} resultado{filtered.length !== 1 ? 's' : ''}</span>
+            {total > 0 && (
+              <button onClick={clearAll}
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all"
+                style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c' }}
+              >
+                <IcoTrash />Limpiar todo
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ── Empty state ─────────────────────────────────────────── */}
@@ -227,7 +296,7 @@ export default function Historial({ history = [], onHistoryChange }) {
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                     {[
                       { label: 'Cultivo',   value: item.cultivo || 'Maíz' },
-                      { label: 'Confianza', value: `${(item.confianza * 100).toFixed(1)}%` },
+                      { label: 'Área afectada', value: `${(item.confianza * 100).toFixed(1)}%` },
                       { label: 'Riesgo',    value: item.riesgo },
                       { label: 'Estado',    value: item.estado },
                     ].map((d, i) => (
@@ -249,13 +318,24 @@ export default function Historial({ history = [], onHistoryChange }) {
                   )}
 
                   {/* Actions */}
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 flex-wrap">
                     <button
                       onClick={() => copy(item, idx)}
                       className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition flex items-center justify-center gap-2"
                     >
                       {copied === idx ? <IcoCheck /> : <IcoCopy />}
                       {copied === idx ? '¡Copiado!' : 'Copiar'}
+                    </button>
+                    <button
+                      onClick={() => handleExportPDF(item, idx)}
+                      disabled={exportingIdx === idx}
+                      className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition flex items-center justify-center gap-2 disabled:opacity-60"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" className="w-4 h-4 flex-shrink-0">
+                        <path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+                        <path d="M14 3v5a1 1 0 001 1h5M9 17v-5m0 0h6m-6 0l3-3m0 0l3 3"/>
+                      </svg>
+                      {exportingIdx === idx ? 'Generando…' : 'PDF'}
                     </button>
                     <button
                       onClick={() => remove(idx)}

@@ -1,6 +1,32 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Manrope:wght@600;700;800;900&display=swap');
 @import "tailwindcss";
 
+/* Dark mode via class strategy */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Theme variables ───────────────────────────────────────────── */
+:root {
+  --bg-main:       #f8fafc;
+  --bg-card:       #ffffff;
+  --bg-input:      #f8fafc;
+  --text-primary:  #0f172a;
+  --text-secondary:#475569;
+  --text-muted:    #94a3b8;
+  --border:        #e2e8f0;
+  --border-light:  #f1f5f9;
+}
+
+html.dark {
+  --bg-main:       #0c1220;
+  --bg-card:       #162032;
+  --bg-input:      #0c1220;
+  --text-primary:  #f1f5f9;
+  --text-secondary:#94a3b8;
+  --text-muted:    #64748b;
+  --border:        #1e3048;
+  --border-light:  #162032;
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 
 body {
