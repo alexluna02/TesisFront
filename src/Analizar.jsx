@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { predictXai, createAnalisis } from './api.js'
 import { exportAnalisisPDF } from './exportPDF.js'
 import { useTheme } from './ThemeContext.jsx'
@@ -55,6 +55,22 @@ const fileToDataUrl = (file) => new Promise((resolve, reject) => {
   reader.onload  = () => resolve(reader.result)
   reader.onerror = () => reject(new Error('No se pudo procesar la imagen'))
   reader.readAsDataURL(file)
+})
+
+const compressImage = (file, maxWidth = 800, quality = 0.75) => new Promise((resolve) => {
+  const canvas = document.createElement('canvas')
+  const img = new Image()
+  const tempUrl = URL.createObjectURL(file)
+  img.onload = () => {
+    URL.revokeObjectURL(tempUrl)
+    const scale = Math.min(1, maxWidth / img.width)
+    canvas.width  = Math.round(img.width  * scale)
+    canvas.height = Math.round(img.height * scale)
+    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height)
+    resolve(canvas.toDataURL('image/jpeg', quality))
+  }
+  img.onerror = () => { URL.revokeObjectURL(tempUrl); resolve('') }
+  img.src = tempUrl
 })
 
 const mapAnalysisResponse = (record, RECS) => {
@@ -138,10 +154,19 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
   const recs        = result ? (RECOMMENDATIONS[result.target_class] ?? RECOMMENDATIONS['Fondo_y_Sana']) : []
   const risk        = result ? getRisk(result.confidence) : null
 
+  const previewUrlRef = useRef('')
+
+  useEffect(() => {
+    return () => { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current) }
+  }, [])
+
   const applyFile = (f) => {
     if (!f?.type.startsWith('image/')) return
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current)
+    const url = URL.createObjectURL(f)
+    previewUrlRef.current = url
     setFile(f)
-    setPreview(URL.createObjectURL(f))
+    setPreview(url)
     setResult(null)
     setError('')
     setImgTab('original')
@@ -174,6 +199,7 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
 
   const clearFile = (e) => {
     e.stopPropagation()
+    if (previewUrlRef.current) { URL.revokeObjectURL(previewUrlRef.current); previewUrlRef.current = '' }
     setFile(null)
     setPreview('')
     setResult(null)
@@ -182,13 +208,17 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
 
   const analyze = async () => {
     if (!file) return
+    if (file.size > 20 * 1024 * 1024) {
+      setError('La imagen no puede superar 20 MB.')
+      return
+    }
     setLoading(true)
     setError('')
     setResult(null)
     setStep(0)
 
     try {
-      const imageDataUrl = await fileToDataUrl(file)
+      const imageDataUrl = await compressImage(file)
       const formData = new FormData()
       formData.append('file', file)
 

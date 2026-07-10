@@ -1108,9 +1108,12 @@ export default function App() {
         setAnalysisHistory(backendHistory)
         setEnfermedades(Array.isArray(enfResponse.data) ? enfResponse.data : [])
       } catch (error) {
-        clearAuthData()
-        setAuthenticated(false)
-        setAnalysisHistory([])
+        if (error?.response?.status === 401) {
+          clearAuthData()
+          setAuthenticated(false)
+          setAnalysisHistory([])
+        }
+        // Otros errores (red caída, 500, timeout) no cierran la sesión
       }
     }
 

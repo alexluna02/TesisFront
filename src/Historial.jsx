@@ -70,18 +70,17 @@ export default function Historial({ history = [], onHistoryChange }) {
     })
   }, [items, search, filterEstado, filterRiesgo])
 
-  const remove = async (idx) => {
-    const item = items[idx]
+  const remove = async (item) => {
     if (!item?.id) return
     try {
       await deleteAnalisis(item.id)
     } catch {
       // ignore backend deletion errors and still remove from UI
     }
-    const next = items.filter((_, i) => i !== idx)
+    const next = items.filter((i) => i.id !== item.id)
     setItems(next)
     if (typeof onHistoryChange === 'function') onHistoryChange(next)
-    if (expanded === idx) setExpanded(null)
+    setExpanded(null)
   }
 
   const clearAll = async () => {
@@ -338,7 +337,7 @@ export default function Historial({ history = [], onHistoryChange }) {
                       {exportingIdx === idx ? 'Generando…' : 'PDF'}
                     </button>
                     <button
-                      onClick={() => remove(idx)}
+                      onClick={() => remove(item)}
                       className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold transition flex items-center justify-center gap-2"
                       style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c' }}
                     >
