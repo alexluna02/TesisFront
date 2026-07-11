@@ -47,6 +47,93 @@ const STEPS = [
   'Guardando en historial…',
 ]
 
+// ── Datos de tratamiento químico ──────────────────────────────────────────────
+
+const _TIZON = {
+  pathogen: 'Exserohilum turcicum',
+  description: 'Produce lesiones necróticas alargadas de color gris-verdoso en las hojas. En condiciones de alta humedad puede unirse y causar pérdidas severas de rendimiento.',
+  products: [
+    { name: 'Mancozeb 80% WP', brands: 'Dithane M-45 · Manzate 200', category: 'Ditiocarbamato', type: 'Protector de contacto', dose200L: '600–800 g', dosePer1L: '3–4 g/L', frequency: 'Cada 10–14 días', color: '#f59e0b', note: 'Disolver en un balde con agua antes de agregar al tanque. No mezclar con productos alcalinos (cal, sulfato de cobre).' },
+    { name: 'Propiconazol 25% EC', brands: 'Tilt 250 EC · Bumper 250 EC', category: 'Triazol', type: 'Sistémico', dose200L: '200–400 mL', dosePer1L: '1–2 mL/L', frequency: 'Cada 14–21 días', color: '#3b82f6', note: 'Penetra en el tejido vegetal y controla el hongo desde el interior. Rotar con otros grupos químicos para prevenir resistencia.' },
+    { name: 'Azoxistrobin 25% SC', brands: 'Amistar 250 SC · Quadris', category: 'Estrobilurina', type: 'Sistémico + preventivo', dose200L: '200–400 mL', dosePer1L: '1–2 mL/L', frequency: 'Cada 14–21 días', color: '#8b5cf6', note: 'Excelente acción preventiva y curativa. Combinar siempre con adherente agrícola para mejorar la cobertura foliar.' },
+  ],
+  mix: {
+    title: 'Mezcla recomendada · Tanque de 200 L',
+    subtitle: 'Combinación protector + sistémico de alta efectividad',
+    components: [
+      { product: 'Mancozeb 80% WP (Dithane M-45)', amount: '600 g', color: '#f59e0b' },
+      { product: 'Propiconazol 25% EC (Tilt 250)', amount: '300 mL', color: '#3b82f6' },
+      { product: 'Adherente agrícola (Agral 90 o similar)', amount: '100–150 mL', color: '#8b5cf6' },
+      { product: 'Agua limpia (pH 5.5–6.5)', amount: 'completar hasta 200 L', color: '#06b6d4' },
+    ],
+  },
+}
+
+const _ROYA = {
+  pathogen: 'Puccinia sorghi',
+  description: 'Produce pústulas café-anaranjadas en ambas caras de la hoja. Las esporas se dispersan fácilmente por el viento, favoreciendo una propagación rápida entre parcelas.',
+  products: [
+    { name: 'Tebuconazol 25% EW', brands: 'Folicur 250 EW · Orius 25 EW', category: 'Triazol', type: 'Sistémico', dose200L: '400–600 mL', dosePer1L: '2–3 mL/L', frequency: 'Cada 14–21 días', color: '#f59e0b', note: 'Aplicar desde los primeros síntomas. Muy efectivo contra royas. Respetar período de carencia de 28 días antes de cosecha.' },
+    { name: 'Azoxistrobin + Ciproconazol', brands: 'Amistar Top · Priori Xtra', category: 'Estrobilurina + Triazol', type: 'Sistémico', dose200L: '400–600 mL', dosePer1L: '2–3 mL/L', frequency: 'Cada 21 días', color: '#3b82f6', note: 'Combina dos mecanismos de acción. Recomendado cuando la infección ya está establecida y se requiere control rápido.' },
+    { name: 'Propiconazol 25% EC', brands: 'Tilt 250 EC · Bumper 250 EC', category: 'Triazol', type: 'Sistémico', dose200L: '300–400 mL', dosePer1L: '1.5–2 mL/L', frequency: 'Cada 14–21 días', color: '#8b5cf6', note: 'Alternativa económica de amplia disponibilidad. Rotar con estrobilurinas para mayor efectividad a largo plazo.' },
+  ],
+  mix: {
+    title: 'Mezcla recomendada · Tanque de 200 L',
+    subtitle: 'Triazol de alta eficacia para control de roya',
+    components: [
+      { product: 'Tebuconazol 25% EW (Folicur 250)', amount: '500 mL', color: '#f59e0b' },
+      { product: 'Adherente agrícola (Agral 90 o similar)', amount: '100–150 mL', color: '#8b5cf6' },
+      { product: 'Agua limpia (pH 5.5–6.5)', amount: 'completar hasta 200 L', color: '#06b6d4' },
+    ],
+  },
+}
+
+const _MANCHA = {
+  pathogen: 'Phyllachora maydis',
+  description: 'Produce manchas blancas o plateadas circulares en las hojas del maíz. Afecta la fotosíntesis progresivamente y puede reducir el rendimiento hasta un 40% en infecciones severas.',
+  products: [
+    { name: 'Clorotalonil 72% SC', brands: 'Bravo 720 SC · Daconil 720', category: 'Organoclorado', type: 'Protector de contacto', dose200L: '400–600 mL', dosePer1L: '2–3 mL/L', frequency: 'Cada 7–10 días', color: '#f59e0b', note: 'Uno de los más efectivos contra mancha blanca. Acción multisitio que reduce el riesgo de resistencia. No mezclar con aceites.' },
+    { name: 'Mancozeb 80% WP', brands: 'Dithane M-45 · Manzate 200', category: 'Ditiocarbamato', type: 'Protector de contacto', dose200L: '600–800 g', dosePer1L: '3–4 g/L', frequency: 'Cada 10–14 días', color: '#3b82f6', note: 'Alternativa económica de buena cobertura. Disolver previamente en un balde con agua antes de incorporar al tanque.' },
+    { name: 'Azoxistrobin 25% SC', brands: 'Amistar 250 SC · Quadris', category: 'Estrobilurina', type: 'Sistémico', dose200L: '200–400 mL', dosePer1L: '1–2 mL/L', frequency: 'Cada 14–21 días', color: '#8b5cf6', note: 'Complementa la acción del Clorotalonil. Usar en mezcla para ampliar el espectro de control en infecciones moderadas a graves.' },
+  ],
+  mix: {
+    title: 'Mezcla recomendada · Tanque de 200 L',
+    subtitle: 'Protector + sistémico de alta cobertura',
+    components: [
+      { product: 'Clorotalonil 72% SC (Bravo 720)', amount: '500 mL', color: '#f59e0b' },
+      { product: 'Azoxistrobin 25% SC (Amistar 250)', amount: '200 mL', color: '#3b82f6' },
+      { product: 'Adherente agrícola (Agral 90 o similar)', amount: '100–150 mL', color: '#8b5cf6' },
+      { product: 'Agua limpia (pH 5.5–6.5)', amount: 'completar hasta 200 L', color: '#06b6d4' },
+    ],
+  },
+}
+
+const CHEMICAL_TREATMENTS = {
+  Tizon: _TIZON, Roya: _ROYA,
+  Mancha_Blanca: _MANCHA, Mancha_blanca: _MANCHA,
+}
+
+const MIXING_STEPS = [
+  { num: 1, icon: '💧', title: 'Verificar la calidad del agua', desc: 'Use agua limpia y libre de sedimentos. Mida el pH con papel indicador (rango ideal 5.5–6.5). Si el pH es mayor a 7 (agua alcalina), agregue corrector de pH o vinagre hasta alcanzar el rango correcto. El agua dura reduce la eficacia de los fungicidas.' },
+  { num: 2, icon: '🪣', title: 'Llenar el tanque a la mitad', desc: 'Vierta 100 litros de agua en el tanque (la mitad del volumen total). Active el agitador mecánico si dispone de uno. Nunca agregue el producto concentrado primero y luego el agua —esto genera zonas de alta concentración que pueden dañar las plantas y el equipo.' },
+  { num: 3, icon: '🧪', title: 'Agregar productos en polvo', desc: 'Disuelva primero los productos en polvo (ej. Mancozeb, Clorotalonil WP) en un balde aparte con agua, formando una pasta homogénea. Luego vierta la pasta lentamente en el tanque mientras agita constantemente para evitar grumos y garantizar una mezcla uniforme.' },
+  { num: 4, icon: '🔬', title: 'Agregar productos líquidos', desc: 'Mida con exactitud los productos líquidos (ej. Propiconazol, Tebuconazol) usando un recipiente graduado. Vierta lentamente por la pared del tanque mientras agita. Orden correcto: sistémicos primero, luego protectores de contacto. Esto evita reacciones químicas indeseadas.' },
+  { num: 5, icon: '🧴', title: 'Agregar el adherente', desc: 'Incorpore el adherente/surfactante agrícola (Agral 90 u otro) al final para evitar exceso de espuma durante la mezcla. El adherente mejora la retención del producto en las hojas y la resistencia al lavado por lluvia, aumentando la eficacia de la aplicación.' },
+  { num: 6, icon: '🚰', title: 'Completar el volumen a 200 L', desc: 'Agregue agua hasta la marca de 200 litros. Agite vigorosamente durante 2–3 minutos hasta obtener una mezcla completamente homogénea sin grumos ni separación de fases. La mezcla debe tener un color y consistencia uniformes en todo el tanque.' },
+  { num: 7, icon: '✅', title: 'Verificación final y uso inmediato', desc: 'La mezcla debe verse uniforme y sin separación. Prepare solo la cantidad necesaria para el mismo día —nunca almacene la mezcla preparada. Los productos pierden efectividad y los residuos almacenados pueden generar compuestos peligrosos o taponar el equipo.' },
+]
+
+const FUMIGATION_STEPS = [
+  { num: 1, icon: '🦺', title: 'Equipos de protección personal (EPP)', desc: 'OBLIGATORIO: guantes de nitrilo o neopreno, mascarilla con filtros para vapores orgánicos (tipo 3M 6200 + P100), lentes de seguridad herméticos, overol impermeable de manga larga y botas de caucho. Nunca aplique sin EPP completo — los fungicidas son absorbidos por la piel.', alert: true },
+  { num: 2, icon: '🕐', title: 'Seleccionar el horario correcto', desc: 'Aplique entre las 6:00–9:00 AM o las 16:00–18:30 PM. Evite las horas de mayor calor (10 AM–3 PM): las altas temperaturas aumentan la volatilización del producto, reducen su efectividad y aumentan el riesgo de quemaduras en las hojas del cultivo.' },
+  { num: 3, icon: '🌤️', title: 'Condiciones climáticas adecuadas', desc: 'No aplique si: el viento supera 15 km/h (las hojas se agitan visiblemente), hay lluvia presente, o se pronostica lluvia en las próximas 4 horas. Condiciones ideales: temperatura 15–28°C, humedad relativa mayor al 50% (mejora la absorción foliar), cielo parcialmente nublado.' },
+  { num: 4, icon: '🔧', title: 'Calibrar el equipo de aspersión', desc: 'Verifique que la bomba funcione correctamente y que las boquillas estén limpias y sin desgaste. Para bombas de mochila: presión de 2–3 bar. Use boquillas de abanico plano de 110° para mayor cobertura uniforme. Calcule la descarga: 200–400 L/ha según el tamaño del cultivo.' },
+  { num: 5, icon: '🌽', title: 'Técnica correcta de aplicación', desc: 'Camine en hileras alternas a favor del viento para evitar inhalar el producto. Cubra ambas caras de la hoja (haz y envés), donde se concentran las esporas del hongo. Mantenga la boquilla a 30–40 cm de la planta. No aplique en el mismo surco dos veces para evitar sobredosificación.' },
+  { num: 6, icon: '📐', title: 'Volumen de mezcla por área', desc: 'Plantas pequeñas hasta 80 cm: aplicar 200 L/ha. Plantas medianas de 80 a 150 cm: 300 L/ha. Plantas grandes mayores a 150 cm: 400 L/ha. Con una mochila de 20 litros necesitará entre 10 y 20 cargas por hectárea. Calcule antes de mezclar para no generar sobrantes.' },
+  { num: 7, icon: '🚿', title: 'Limpieza posterior al uso', desc: 'Lave el equipo con agua y detergente inmediatamente al terminar —nunca deje residuos secar dentro de la bomba ya que pueden tapar las boquillas. Báñese con abundante agua y jabón. Lave la ropa de trabajo por separado. Perfore y almacene los envases vacíos lejos de fuentes de agua.' },
+  { num: 8, icon: '📋', title: 'Registrar cada aplicación', desc: 'Anote: fecha y hora, producto y dosis utilizada, área tratada en hectáreas, condiciones climáticas y persona responsable. Consulte la etiqueta para el período de carencia antes de la cosecha (Mancozeb: 7 días, Propiconazol: 14 días, Tebuconazol: 28 días, Clorotalonil: 7 días).' },
+]
+
 const getRisk    = (conf) => conf >= 85 ? 'Alto' : conf >= 60 ? 'Medio' : 'Bajo'
 const getSeverity = (conf, cls) => cls === 'Fondo_y_Sana' ? 'leve' : conf < 5 ? 'leve' : conf <= 15 ? 'moderada' : 'grave'
 
@@ -153,6 +240,7 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
   const disease     = result ? DISEASES[result.target_class] : null
   const recs        = result ? (RECOMMENDATIONS[result.target_class] ?? RECOMMENDATIONS['Fondo_y_Sana']) : []
   const risk        = result ? getRisk(result.confidence) : null
+  const chemData    = result ? (CHEMICAL_TREATMENTS[result.target_class] ?? null) : null
 
   const previewUrlRef = useRef('')
 
@@ -619,6 +707,140 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── Tratamiento químico ─────────────────────────────────── */}
+          {!isHealthy && chemData && (
+            <div className="space-y-4">
+
+              {/* Productos recomendados */}
+              <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
+                <div className={`px-6 py-4 border-b flex items-center gap-3 ${isDark ? 'border-[#1e3048]' : 'border-slate-100'}`}>
+                  <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#b45309" strokeWidth="2" className="w-4 h-4"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/></svg>
+                  </div>
+                  <div>
+                    <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Tratamiento químico recomendado</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">Agente causal: <span className="italic">{chemData.pathogen}</span></p>
+                  </div>
+                </div>
+
+                <div className={`px-6 py-3 text-xs leading-relaxed ${isDark ? 'bg-[#1a2a3a] text-slate-300' : 'bg-amber-50 text-amber-900'}`}>
+                  {chemData.description}
+                </div>
+
+                <div className="p-5 space-y-3">
+                  {chemData.products.map((p, i) => (
+                    <div key={i} className={`rounded-xl border p-4 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
+                      <div className="flex items-start justify-between gap-2 flex-wrap">
+                        <div>
+                          <p className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{p.name}</p>
+                          <p className="text-xs text-slate-400 mt-0.5">{p.brands}</p>
+                        </div>
+                        <div className="flex gap-2 flex-wrap">
+                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: p.color + '22', color: p.color, border: `1px solid ${p.color}44` }}>{p.category}</span>
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${isDark ? 'bg-[#0e1929] text-slate-300 border border-[#2a3d55]' : 'bg-white text-slate-500 border border-slate-200'}`}>{p.type}</span>
+                        </div>
+                      </div>
+                      <div className="mt-3 grid grid-cols-3 gap-2">
+                        {[
+                          { label: 'Por 200 L', value: p.dose200L },
+                          { label: 'Por litro', value: p.dosePer1L },
+                          { label: 'Frecuencia', value: p.frequency },
+                        ].map((d, j) => (
+                          <div key={j} className={`rounded-lg border p-2 text-center ${isDark ? 'bg-[#0e1929] border-[#2a3d55]' : 'bg-white border-slate-200'}`}>
+                            <p className="text-[10px] text-slate-400 uppercase tracking-wide">{d.label}</p>
+                            <p className={`font-bold text-xs mt-0.5 ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{d.value}</p>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-2 text-xs text-slate-400 italic leading-relaxed">{p.note}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Mezcla recomendada */}
+                <div className="px-5 pb-5">
+                  <div className={`rounded-xl border p-4 ${isDark ? 'bg-[#0d1e35] border-blue-900/50' : 'bg-blue-50 border-blue-200'}`}>
+                    <p className={`font-bold text-sm mb-0.5 ${isDark ? 'text-blue-300' : 'text-blue-900'}`}>{chemData.mix.title}</p>
+                    <p className="text-xs text-slate-400 mb-3">{chemData.mix.subtitle}</p>
+                    <div className="space-y-2">
+                      {chemData.mix.components.map((c, i) => (
+                        <div key={i} className={`flex items-center justify-between rounded-lg border px-3 py-2 ${isDark ? 'bg-[#162032] border-[#2a3d55]' : 'bg-white border-blue-100'}`}>
+                          <div className="flex items-center gap-2">
+                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-black flex-shrink-0" style={{ background: c.color }}>{i + 1}</span>
+                            <span className={`text-xs font-medium ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{c.product}</span>
+                          </div>
+                          <span className="text-xs font-bold ml-3 flex-shrink-0" style={{ color: c.color }}>{c.amount}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Preparación de la mezcla */}
+              <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
+                <div className={`px-6 py-4 border-b flex items-center gap-3 ${isDark ? 'border-[#1e3048]' : 'border-slate-100'}`}>
+                  <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" strokeWidth="2" className="w-4 h-4"><path d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+                  </div>
+                  <div>
+                    <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Preparación de la mezcla</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">Procedimiento paso a paso para tanque de 200 litros</p>
+                  </div>
+                </div>
+                <div className="p-5 space-y-3">
+                  {MIXING_STEPS.map((s) => (
+                    <div key={s.num} className={`flex gap-3 rounded-xl border p-4 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
+                      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-black text-sm">{s.num}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-base leading-none">{s.icon}</span>
+                          <p className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{s.title}</p>
+                        </div>
+                        <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{s.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Procedimiento de fumigación */}
+              <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
+                <div className={`px-6 py-4 border-b flex items-center gap-3 ${isDark ? 'border-[#1e3048]' : 'border-slate-100'}`}>
+                  <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="#15803d" strokeWidth="2" className="w-4 h-4"><path d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/></svg>
+                  </div>
+                  <div>
+                    <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Procedimiento de fumigación</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">Guía completa para una aplicación segura y efectiva</p>
+                  </div>
+                </div>
+                <div className="p-5 space-y-3">
+                  {FUMIGATION_STEPS.map((s) => (
+                    <div key={s.num} className={`flex gap-3 rounded-xl border p-4 ${
+                      s.alert
+                        ? isDark ? 'bg-red-950/40 border-red-800/50' : 'bg-red-50 border-red-200'
+                        : isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'
+                    }`}>
+                      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${s.alert ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'}`}>{s.num}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-base leading-none">{s.icon}</span>
+                          <p className={`font-bold text-sm ${s.alert ? isDark ? 'text-red-300' : 'text-red-800' : isDark ? 'text-slate-100' : 'text-slate-900'}`}>{s.title}</p>
+                        </div>
+                        <p className={`text-xs leading-relaxed ${s.alert ? isDark ? 'text-red-200' : 'text-red-700' : isDark ? 'text-slate-300' : 'text-slate-600'}`}>{s.desc}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className={`mx-5 mb-5 rounded-xl border px-4 py-3 text-xs flex items-start gap-2 ${isDark ? 'bg-amber-950/30 border-amber-800/50 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 flex-shrink-0 mt-0.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+                  <span>Las dosis indicadas son de referencia. Consulte siempre la etiqueta oficial del producto y el criterio de un ingeniero agrónomo antes de aplicar. El uso inadecuado de plaguicidas puede dañar el cultivo, la salud y el medio ambiente.</span>
+                </div>
               </div>
             </div>
           )}

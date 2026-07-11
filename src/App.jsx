@@ -1071,6 +1071,152 @@ function toHistoryItem(record) {
   }
 }
 
+// ── Acerca de ─────────────────────────────────────────────────────────────────
+function AcercaDe() {
+  const { isDark } = useTheme()
+  const techs = [
+    { name: 'React 18', role: 'Interfaz de usuario', color: '#06b6d4' },
+    { name: 'Vite 5', role: 'Bundler y build tool', color: '#646cff' },
+    { name: 'Tailwind CSS 4', role: 'Estilos utilitarios', color: '#06b6d4' },
+    { name: 'MIT-B1 + DeepLabV3+', role: 'Modelo de segmentación IA', color: '#16a34a' },
+    { name: 'Grad-CAM XAI', role: 'Explicabilidad del modelo', color: '#f59e0b' },
+    { name: 'FastAPI + PyTorch', role: 'Backend e inferencia', color: '#ef4444' },
+    { name: 'Render', role: 'Plataforma de despliegue', color: '#7c3aed' },
+    { name: 'Google OAuth 2.0', role: 'Autenticación segura', color: '#3b82f6' },
+  ]
+  const diseases = [
+    { name: 'Tizón del Maíz', pathogen: 'Exserohilum turcicum', color: '#f97316' },
+    { name: 'Roya', pathogen: 'Puccinia sorghi', color: '#f59e0b' },
+    { name: 'Mancha Blanca', pathogen: 'Phyllachora maydis', color: '#ef4444' },
+    { name: 'Cultivo Sano', pathogen: 'Sin patógeno detectado', color: '#22c55e' },
+  ]
+  const card = `rounded-2xl border shadow-sm p-6 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`
+  const muted = isDark ? 'text-slate-400' : 'text-slate-500'
+  const heading = isDark ? 'text-slate-100' : 'text-slate-900'
+
+  return (
+    <div className="space-y-5 fade-up max-w-4xl">
+
+      {/* Hero */}
+      <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
+        <div className="px-6 pt-8 pb-6">
+          <div className="flex items-center gap-4 mb-5">
+            <div className="w-14 h-14 rounded-2xl bg-emerald-500 flex items-center justify-center text-white text-2xl font-black shadow-lg shadow-emerald-500/30">A</div>
+            <div>
+              <h1 className={`text-2xl font-black ${heading}`}>AgroScan</h1>
+              <p className="text-sm text-emerald-600 font-semibold">UAV · Maíz · Inteligencia Artificial</p>
+            </div>
+          </div>
+          <p className={`text-sm leading-relaxed ${muted}`}>
+            AgroScan es un sistema web de diagnóstico fitosanitario para cultivos de maíz desarrollado como proyecto de investigación de la <strong className={heading}>Universidad Técnica del Norte</strong> (Ibarra, Ecuador). Utiliza imágenes capturadas por drones UAV y modelos de inteligencia artificial para detectar enfermedades foliares de forma rápida y precisa, apoyando la toma de decisiones de técnicos agrícolas y agricultores de la zona.
+          </p>
+        </div>
+        <div className={`grid grid-cols-3 border-t text-center divide-x ${isDark ? 'border-[#1e3048] divide-[#1e3048]' : 'border-slate-100 divide-slate-100'}`}>
+          {[
+            { label: 'Enfermedades detectadas', value: '3' },
+            { label: 'Modelo de IA', value: 'MIT-B1' },
+            { label: 'Universidad', value: 'UTN' },
+          ].map((s, i) => (
+            <div key={i} className="py-4 px-3">
+              <p className={`text-xl font-black ${heading}`}>{s.value}</p>
+              <p className={`text-xs mt-0.5 ${muted}`}>{s.label}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Propósito */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {[
+          { icon: '🌽', title: '¿Para quién es?', body: 'Diseñado para técnicos agrícolas e ingenieros agrónomos que realizan monitoreo de campo, así como para agricultores de Imbabura que desean identificar enfermedades en sus cultivos de maíz sin necesidad de laboratorios costosos ni largos tiempos de espera.' },
+          { icon: '🎯', title: '¿Qué resuelve?', body: 'El diagnóstico visual tradicional de enfermedades en maíz requiere experiencia especializada y es propenso a errores. AgroScan automatiza este proceso usando visión por computadora, reduciendo el tiempo de diagnóstico de días a segundos y aumentando la consistencia y precisión del resultado.' },
+          { icon: '🚁', title: '¿Cómo funciona?', body: 'El agricultor o técnico captura imágenes aéreas del cultivo con un drone UAV. La imagen se sube a la plataforma, el modelo de IA realiza una segmentación semántica píxel a píxel y genera un mapa de calor Grad-CAM que explica visualmente qué zonas determinaron el diagnóstico.' },
+          { icon: '📍', title: 'Contexto geográfico', body: 'Desarrollado y validado para las condiciones agroclimáticas de la provincia de Imbabura, Ecuador. Las enfermedades detectadas corresponden a las de mayor incidencia en la zona: Tizón, Roya y Mancha Blanca, patologías frecuentes en los valles de Ibarra, Urcuquí y Cotacachi.' },
+        ].map((item, i) => (
+          <div key={i} className={card}>
+            <div className="text-2xl mb-3">{item.icon}</div>
+            <h3 className={`font-bold text-sm mb-2 ${heading}`}>{item.title}</h3>
+            <p className={`text-xs leading-relaxed ${muted}`}>{item.body}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Modelo de IA */}
+      <div className={card}>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#15803d" strokeWidth="2" className="w-4 h-4"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          </div>
+          <h2 className={`font-bold ${heading}`}>Modelo de Inteligencia Artificial</h2>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className={`rounded-xl border p-4 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
+            <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-2">Arquitectura</p>
+            <p className={`font-black text-lg ${heading}`}>MIT-B1 + DeepLabV3+</p>
+            <p className={`text-xs mt-2 leading-relaxed ${muted}`}>El encoder <strong>Mix Transformer B1 (MIT-B1)</strong> es un transformer jerárquico preentrenado en ImageNet que extrae características visuales a múltiples escalas. El decoder <strong>DeepLabV3+</strong> realiza la segmentación semántica píxel a píxel para identificar zonas enfermas en la imagen.</p>
+          </div>
+          <div className={`rounded-xl border p-4 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
+            <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-2">Explicabilidad (XAI)</p>
+            <p className={`font-black text-lg ${heading}`}>Grad-CAM</p>
+            <p className={`text-xs mt-2 leading-relaxed ${muted}`}><strong>Gradient-weighted Class Activation Mapping</strong> genera un mapa de calor que resalta las regiones de la imagen donde el modelo concentró su atención para el diagnóstico. Esto permite al técnico validar visualmente el resultado y aumentar la confianza en la decisión del sistema.</p>
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: 'Tarea', value: 'Segmentación semántica' },
+            { label: 'Framework', value: 'PyTorch' },
+            { label: 'Clases', value: '4 (3 enf. + sano)' },
+            { label: 'Metodología', value: 'CRISP-DM' },
+          ].map((d, i) => (
+            <div key={i} className={`rounded-lg border p-3 text-center ${isDark ? 'bg-[#0e1929] border-[#2a3d55]' : 'bg-white border-slate-200'}`}>
+              <p className={`text-[10px] uppercase tracking-wider ${muted}`}>{d.label}</p>
+              <p className={`font-bold text-xs mt-1 ${heading}`}>{d.value}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Enfermedades */}
+      <div className={card}>
+        <h2 className={`font-bold mb-4 ${heading}`}>Enfermedades detectadas</h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {diseases.map((d, i) => (
+            <div key={i} className={`rounded-xl border p-4 flex items-center gap-3 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
+              <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: d.color }} />
+              <div>
+                <p className={`font-bold text-sm ${heading}`}>{d.name}</p>
+                <p className={`text-xs italic ${muted}`}>{d.pathogen}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Stack tecnológico */}
+      <div className={card}>
+        <h2 className={`font-bold mb-4 ${heading}`}>Tecnologías utilizadas</h2>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {techs.map((t, i) => (
+            <div key={i} className={`rounded-xl border p-3 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
+              <div className="w-2 h-2 rounded-full mb-2" style={{ background: t.color }} />
+              <p className={`font-bold text-xs ${heading}`}>{t.name}</p>
+              <p className={`text-[11px] mt-0.5 ${muted}`}>{t.role}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Footer UTN */}
+      <div className={`rounded-2xl border p-6 text-center ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-slate-50 border-slate-200'}`}>
+        <p className={`font-bold ${heading}`}>Universidad Técnica del Norte</p>
+        <p className={`text-sm mt-1 ${muted}`}>Facultad de Ingeniería en Ciencias Aplicadas · Ibarra, Ecuador</p>
+        <p className={`text-xs mt-3 ${muted}`}>Proyecto de Tesis · 2026 · Desarrollado con metodología CRISP-DM</p>
+      </div>
+
+    </div>
+  )
+}
+
 export default function App() {
   const [page, setPage] = useState('inicio')
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -1195,12 +1341,7 @@ export default function App() {
                 onNameChange={(name) => setUserName(name)}
               />
             )}
-            {page === 'acerca' && (
-              <div className="rounded-2xl bg-white border border-slate-100 shadow-sm p-10 text-center text-slate-500">
-                <p className="text-2xl font-black text-slate-900 mb-2">AgroScan</p>
-                <p className="text-sm">Universidad Técnica · Tesis 2025</p>
-              </div>
-            )}
+            {page === 'acerca' && <AcercaDe />}
           </main>
         </div>
       </div>
