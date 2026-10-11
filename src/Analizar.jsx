@@ -1,7 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { predictXai, createAnalisis } from './api.js'
+import { predictXai, predictSegmentation, createAnalisis } from './api.js'
 import { exportAnalisisPDF } from './exportPDF.js'
 import { useTheme } from './ThemeContext.jsx'
+import { AnalysisTimingPanel, prepareUploadFile, timedRequest, timingFrom, useModelLoadTime } from './Rendimiento.jsx'
+import AnalizarParcela from './AnalizarParcela.jsx'
 
 const DISEASES = {
   Fondo_y_Sana:  { label: 'Cultivo Sano',   color: '#15803d', gradFrom: '#f0fdf4', gradTo: '#dcfce7', border: '#86efac', barColor: '#22c55e' },
@@ -222,8 +224,132 @@ function DiseaseIcon() {
   )
 }
 
-export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [], enfermedades = [] }) {
+// ── Máscara de clases del modelo (mismo orden/paleta que model.py::PALETTE) ────
+const MASK_PALETTE_RGB = [
+  [0, 0, 0],     // Fondo_y_Sana
+  [255, 0, 0],   // Tizon
+  [0, 255, 0],   // Roya
+  [0, 0, 255],   // Mancha_Blanca
+]
+
+const hexToRgb = (hex) => {
+  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex)
+  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [239, 68, 68]
+}
+
+// ── Imagen anotada: original + área afectada pintada + caja + etiqueta ───────
+function AnnotatedResultImage({ originalSrc, maskBase64, targetClassId, label, confidence, highlightColor }) {
+  const canvasRef = useRef(null)
+
+  useEffect(() => {
+    if (!originalSrc || !canvasRef.current) return
+    let cancelled = false
+    const canvas = canvasRef.current
+
+    const drawPlain = (img) => {
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      canvas.getContext('2d').drawImage(img, 0, 0)
+    }
+
+    const origImg = new Image()
+    origImg.onload = () => {
+      if (cancelled) return
+      if (!maskBase64 || targetClassId === null || targetClassId === undefined) {
+        drawPlain(origImg)
+        return
+      }
+
+      const maskImg = new Image()
+      maskImg.onload = () => {
+        if (cancelled) return
+        const mW = maskImg.naturalWidth
+        const mH = maskImg.naturalHeight
+        const maskCanvas = document.createElement('canvas')
+        maskCanvas.width = mW
+        maskCanvas.height = mH
+        const maskCtx = maskCanvas.getContext('2d')
+        maskCtx.drawImage(maskImg, 0, 0)
+        const maskData = maskCtx.getImageData(0, 0, mW, mH)
+
+        const [tr, tg, tb] = MASK_PALETTE_RGB[targetClassId] ?? [255, 0, 0]
+        const [hr, hg, hb] = hexToRgb(highlightColor)
+        const highlight = maskCtx.createImageData(mW, mH)
+        let minX = mW, minY = mH, maxX = 0, maxY = 0, found = false
+
+        for (let y = 0; y < mH; y++) {
+          for (let x = 0; x < mW; x++) {
+            const i = (y * mW + x) * 4
+            if (maskData.data[i] === tr && maskData.data[i + 1] === tg && maskData.data[i + 2] === tb) {
+              highlight.data[i] = hr; highlight.data[i + 1] = hg; highlight.data[i + 2] = hb; highlight.data[i + 3] = 150
+              if (x < minX) minX = x
+              if (x > maxX) maxX = x
+              if (y < minY) minY = y
+              if (y > maxY) maxY = y
+              found = true
+            }
+          }
+        }
+
+        const outW = origImg.naturalWidth
+        const outH = origImg.naturalHeight
+        canvas.width = outW
+        canvas.height = outH
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(origImg, 0, 0, outW, outH)
+
+        if (found) {
+          maskCtx.putImageData(highlight, 0, 0)
+          // Sin suavizado: evita que manchas pequeñas y separadas (roya, mancha blanca)
+          // se difuminen entre sí al escalar la máscara 768x768 al tamaño de salida.
+          ctx.imageSmoothingEnabled = false
+          ctx.drawImage(maskCanvas, 0, 0, outW, outH)
+          ctx.imageSmoothingEnabled = true
+
+          const scaleX = outW / mW
+          const scaleY = outH / mH
+          const bx = minX * scaleX, by = minY * scaleY
+          const bw = Math.max((maxX - minX) * scaleX, 1)
+          const bh = Math.max((maxY - minY) * scaleY, 1)
+
+          ctx.strokeStyle = highlightColor
+          ctx.lineWidth = Math.max(2, outW * 0.004)
+          ctx.strokeRect(bx, by, bw, bh)
+
+          const labelText = `${label} ${Math.round(confidence)}%`
+          const fontSize = Math.max(16, Math.round(outW * 0.024))
+          ctx.font = `bold ${fontSize}px "Plus Jakarta Sans", sans-serif`
+          const paddingX = fontSize * 0.6
+          const textW = ctx.measureText(labelText).width
+          const badgeW = textW + paddingX * 2
+          const badgeH = fontSize * 1.8
+          let badgeX = bx
+          let badgeY = by - badgeH - 4
+          if (badgeY < 0) badgeY = by + 4
+          if (badgeX + badgeW > outW) badgeX = outW - badgeW - 4
+          if (badgeX < 0) badgeX = 0
+
+          ctx.fillStyle = highlightColor
+          ctx.fillRect(badgeX, badgeY, badgeW, badgeH)
+          ctx.fillStyle = '#ffffff'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(labelText, badgeX + paddingX, badgeY + badgeH / 2)
+        }
+      }
+      maskImg.onerror = () => drawPlain(origImg)
+      maskImg.src = `data:image/png;base64,${maskBase64}`
+    }
+    origImg.src = originalSrc
+
+    return () => { cancelled = true }
+  }, [originalSrc, maskBase64, targetClassId, label, confidence, highlightColor])
+
+  return <canvas ref={canvasRef} className="w-full h-full object-contain" />
+}
+
+export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [], enfermedades = [], initialMode = 'individual', preselectedParcelaId = null, showPerformance = false }) {
   const { isDark } = useTheme()
+  const [mode, setMode] = useState(initialMode) // 'individual' | 'parcela'
   const [file, setFile]               = useState(null)
   const [preview, setPreview]         = useState('')
   const [previewDataUrl, setPreviewDataUrl] = useState('')
@@ -232,7 +358,10 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
   const [step, setStep]               = useState(-1)
   const [error, setError]             = useState('')
   const [result, setResult]           = useState(null)
-  const [imgTab, setImgTab]           = useState('original')
+  const [maskBase64, setMaskBase64]   = useState(null)
+  const [timings, setTimings]         = useState(null)
+  const modelLoadMs                   = useModelLoadTime()
+  const [showXai, setShowXai]         = useState(false)
   const [exportingPdf, setExportingPdf] = useState(false)
 
   const displayConf = useCountUp(result?.confidence ?? 0, !!result && !loading)
@@ -256,8 +385,9 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
     setFile(f)
     setPreview(url)
     setResult(null)
+    setMaskBase64(null)
+    setShowXai(false)
     setError('')
-    setImgTab('original')
     fileToDataUrl(f).then(setPreviewDataUrl).catch(() => setPreviewDataUrl(''))
   }
 
@@ -291,6 +421,8 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
     setFile(null)
     setPreview('')
     setResult(null)
+    setMaskBase64(null)
+    setShowXai(false)
     setError('')
   }
 
@@ -303,16 +435,36 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
     setLoading(true)
     setError('')
     setResult(null)
+    setMaskBase64(null)
+    setTimings(null)
+    setShowXai(false)
     setStep(0)
 
     try {
       const imageDataUrl = await compressImage(file)
+      const tPrep = performance.now()
+      const upload = await prepareUploadFile(file)
+      const prepMs = performance.now() - tPrep
       const formData = new FormData()
-      formData.append('file', file)
+      formData.append('file', upload.file)
+      const segFormData = new FormData()
+      segFormData.append('file', upload.file)
 
       setStep(1)
-      const response = await predictXai(formData)
-      const data = response.data
+      const [xaiOutcome, segOutcome] = await Promise.allSettled([
+        timedRequest(() => predictXai(formData)),
+        timedRequest(() => predictSegmentation(segFormData)),
+      ])
+      if (xaiOutcome.status !== 'fulfilled') throw xaiOutcome.reason
+      const data = xaiOutcome.value.response.data
+      const segResponse = segOutcome.status === 'fulfilled' ? segOutcome.value.response : null
+      setMaskBase64(segResponse?.data?.mask_base64_png ?? null)
+      setTimings({
+        xai: timingFrom(xaiOutcome.value.response, xaiOutcome.value.roundtripMs),
+        seg: segResponse ? timingFrom(segResponse, segOutcome.value.roundtripMs) : null,
+        prepMs,
+        upload: { ...upload, uploadBytes: upload.file.size },
+      })
 
       setStep(2)
       setResult(data)
@@ -351,6 +503,37 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
 
   return (
     <div className="space-y-5 fade-up">
+
+      {/* ── Mode selector ──────────────────────────────────────────── */}
+      <div className={`rounded-2xl border shadow-sm p-1.5 flex gap-1.5 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
+        {[
+          { id: 'individual', label: 'Diagnóstico Individual', icon: '🔬', desc: 'Analiza una imagen UAV a la vez' },
+          { id: 'parcela',    label: 'Analizar Parcela Completa', icon: '🛰️', desc: 'Muestreo sistemático de un lote entero' },
+        ].map(({ id, label, icon, desc }) => (
+          <button
+            key={id}
+            onClick={() => setMode(id)}
+            className={`flex-1 flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all ${
+              mode === id
+                ? 'text-white shadow-md'
+                : isDark ? 'text-slate-400 hover:bg-slate-800/50' : 'text-slate-500 hover:bg-slate-50'
+            }`}
+            style={mode === id ? { background: 'linear-gradient(135deg,#7c3aed,#6d28d9)' } : {}}
+          >
+            <span className="text-xl leading-none">{icon}</span>
+            <div>
+              <p className={`text-sm font-bold leading-tight ${mode === id ? 'text-white' : ''}`}>{label}</p>
+              <p className={`text-[11px] mt-0.5 ${mode === id ? 'text-violet-200' : 'text-slate-400'}`}>{desc}</p>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {/* ── Parcela mode ─────────────────────────────────────────── */}
+      {mode === 'parcela' && <AnalizarParcela preselectedParcelaId={preselectedParcelaId} />}
+
+      {/* ── Individual mode ──────────────────────────────────────── */}
+      {mode === 'individual' && <>
 
       {/* ── Upload card ───────────────────────────────────────────── */}
       <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
@@ -578,6 +761,15 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
                       >
                         Riesgo {risk}
                       </span>
+                      {!isHealthy && result.model_confidence !== undefined && (
+                        <span
+                          className="rounded-full px-2.5 py-0.5 text-xs font-bold"
+                          style={{ background: 'rgba(255,255,255,0.6)', color: disease.color, border: `1px solid ${disease.border}` }}
+                          title="Probabilidad promedio que el modelo asignó a esta clase en los píxeles que diagnosticó como tal"
+                        >
+                          Confianza del modelo {Math.round(result.model_confidence)}%
+                        </span>
+                      )}
                       <span className="text-xs text-slate-500">· Cultivo de Maíz</span>
                     </div>
                   </div>
@@ -607,72 +799,59 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
             </div>
           )}
 
-          {/* Image comparison */}
+          {/* Resultado visual: una sola imagen con el área afectada resaltada */}
           <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-            <div className="px-5 pt-5 pb-0 flex items-center justify-between">
-              <p className="font-bold text-slate-900 text-sm">Análisis visual</p>
-              <div className="flex rounded-xl overflow-hidden border border-slate-200 text-xs font-semibold">
-                {[
-                  { key: 'original', label: 'Original' },
-                  { key: 'xai',      label: 'Grad-CAM XAI' },
-                  { key: 'ambas',    label: 'Comparar' },
-                ].map(({ key, label }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => setImgTab(key)}
-                    className="px-3 py-1.5 transition-colors"
-                    style={imgTab === key
-                      ? { background: '#0f172a', color: 'white' }
-                      : { background: 'white', color: '#64748b' }
-                    }
-                  >
-                    {label}
-                  </button>
-                ))}
+            <div className="px-5 pt-5 pb-4">
+              <p className="font-bold text-slate-900 text-sm">Resultado del análisis</p>
+            </div>
+
+            <div className="px-5 pb-5">
+              <div className="aspect-video rounded-xl overflow-hidden bg-slate-900 border border-slate-200 relative">
+                {isHealthy ? (
+                  <img src={preview} alt="Imagen analizada" className="w-full h-full object-contain"/>
+                ) : (
+                  <AnnotatedResultImage
+                    originalSrc={preview}
+                    maskBase64={maskBase64}
+                    targetClassId={Number(result.target_class_id)}
+                    label={disease?.label ?? result.target_class}
+                    confidence={result.model_confidence ?? result.confidence}
+                    highlightColor={disease?.barColor ?? '#ef4444'}
+                  />
+                )}
+                <div className="absolute top-3 left-3">
+                  <span className="rounded-lg bg-slate-950/60 backdrop-blur-sm border border-white/10 px-3 py-1 text-xs font-semibold text-white">
+                    Imagen analizada UAV
+                  </span>
+                </div>
               </div>
             </div>
 
-            <div className="p-5">
-              {imgTab === 'ambas' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Imagen original</p>
-                    <div className="aspect-video rounded-xl overflow-hidden bg-slate-100 border border-slate-200">
-                      <img src={preview} alt="Original" className="w-full h-full object-cover"/>
-                    </div>
-                  </div>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">Mapa de calor Grad-CAM</p>
+            {!isHealthy && result.xai_base64_png && (
+              <div className="px-5 pb-5">
+                <button
+                  type="button"
+                  onClick={() => setShowXai((v) => !v)}
+                  className="text-xs font-semibold text-slate-500 hover:text-slate-700 flex items-center gap-1.5"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`w-3.5 h-3.5 transition-transform ${showXai ? 'rotate-90' : ''}`}>
+                    <path d="M9 18l6-6-6-6"/>
+                  </svg>
+                  Ver explicabilidad (Grad-CAM XAI)
+                </button>
+                {showXai && (
+                  <div className="mt-3">
                     <div className="aspect-video rounded-xl overflow-hidden bg-slate-100 border border-slate-200">
                       <img src={`data:image/png;base64,${result.xai_base64_png}`} alt="Grad-CAM" className="w-full h-full object-cover"/>
                     </div>
+                    <div className="mt-2 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-500 flex items-start gap-2">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" className="w-4 h-4 flex-shrink-0 mt-0.5">
+                        <circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/>
+                      </svg>
+                      <span>El mapa Grad-CAM muestra las zonas donde el modelo concentró su atención para el diagnóstico. Las áreas en colores cálidos (rojo/naranja) indican mayor relevancia.</span>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="aspect-video rounded-xl overflow-hidden bg-slate-900 border border-slate-200 relative">
-                  <img
-                    src={imgTab === 'original' ? preview : `data:image/png;base64,${result.xai_base64_png}`}
-                    alt={imgTab === 'original' ? 'Original' : 'Grad-CAM'}
-                    className="w-full h-full object-cover transition-opacity duration-300"
-                  />
-                  <div className="absolute top-3 left-3">
-                    <span className="rounded-lg bg-slate-950/60 backdrop-blur-sm border border-white/10 px-3 py-1 text-xs font-semibold text-white">
-                      {imgTab === 'original' ? 'Imagen original UAV' : 'Mapa de calor Grad-CAM XAI'}
-                    </span>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {imgTab === 'xai' && (
-              <div className="px-5 pb-5">
-                <div className="rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-500 flex items-start gap-2">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" className="w-4 h-4 flex-shrink-0 mt-0.5">
-                    <circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/>
-                  </svg>
-                  <span>El mapa Grad-CAM muestra las zonas de la imagen donde el modelo concentró su atención para el diagnóstico. Las áreas en colores cálidos (rojo/naranja) indican las regiones de mayor relevancia.</span>
-                </div>
+                )}
               </div>
             )}
           </div>
@@ -860,8 +1039,14 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
               {exportingPdf ? 'Generando…' : 'Exportar PDF'}
             </button>
           </div>
+
+          {showPerformance && timings && (
+            <AnalysisTimingPanel seg={timings.seg} xai={timings.xai} loadMs={modelLoadMs} prepMs={timings.prepMs} upload={timings.upload}/>
+          )}
         </div>
       )}
+
+      </>}
     </div>
   )
 }

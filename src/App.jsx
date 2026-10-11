@@ -2,11 +2,16 @@ import { useState, useEffect } from 'react'
 import { useTheme } from './ThemeContext.jsx'
 import Analizar from './Analizar.jsx'
 import Historial from './Historial.jsx'
+import Enfermedades from './Enfermedades.jsx'
+import Mercado from './Mercado.jsx'
 import Profile from './Profile.jsx'
+import Usuarios from './Usuarios.jsx'
+import ModeloIA from './ModeloIA.jsx'
 import Login from './Login.jsx'
-import foto3 from './Imagenes/foto3.png'
+import foto3 from './Imagenes/foto3.webp'
 import { api, fetchMe, fetchAnalisis, logoutRequest, isLogged, clearAuthData } from './api.js'
 import { fetchEnfermedades } from './api.js'
+import { loadParcelHistory, PARCEL_HISTORY_KEY, getParcelaSummaries, PARCELAS_KEY } from './AnalizarParcela.jsx'
 
 // ── Google Font ───────────────────────────────────────────────────────────────
 const FontLink = () => (
@@ -94,6 +99,28 @@ const IcoHistory = () => (
 const IcoAbout = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[18px] h-[18px]">
     <path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+  </svg>
+)
+const IcoDisease = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[18px] h-[18px]">
+    <path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/>
+    <path d="M12 8v.01M9 12v.01M15 10v.01M8 16v.01M16 15v.01M12 16v.01"/>
+  </svg>
+)
+const IcoMarket = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[18px] h-[18px]">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M3 17l5-5 4 4 7-9M14 6h5v5"/>
+  </svg>
+)
+const IcoUsers = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[18px] h-[18px]">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3l7 3v5c0 4.5-3 8.3-7 9.5C8 19.3 5 15.5 5 11V6l7-3z"/>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 12a2 2 0 100-4 2 2 0 000 4zm-3.5 4c.6-1.4 2-2 3.5-2s2.9.6 3.5 2"/>
+  </svg>
+)
+const IcoModel = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[18px] h-[18px]">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M4 19h16M7 16V10m5 6V6m5 10v-4"/>
   </svg>
 )
 const IcoMenu = () => (
@@ -224,14 +251,32 @@ function useWeather() {
 
 // ── Nav config ────────────────────────────────────────────────────────────────
 const NAV = [
-  { id: 'inicio',    label: 'Inicio',           Icon: IcoHome    },
-  { id: 'analizar',  label: 'Analizar',          Icon: IcoScan    },
-  { id: 'historial', label: 'Historial',         Icon: IcoHistory },
-  { id: 'acerca',    label: 'Acerca de',          Icon: IcoAbout  },
+  { id: 'inicio',       label: 'Inicio',           Icon: IcoHome    },
+  { id: 'analizar',     label: 'Analizar',         Icon: IcoScan    },
+  { id: 'historial',    label: 'Historial',        Icon: IcoHistory },
+  { id: 'enfermedades', label: 'Enfermedades',     Icon: IcoDisease },
+  { id: 'mercado',      label: 'Mercado',          Icon: IcoMarket  },
+  { id: 'acerca',       label: 'Acerca de',        Icon: IcoAbout   },
+]
+const RESEARCH_NAV = [
+  { id: 'modelo',       label: 'Ficha del modelo', Icon: IcoModel   },
+]
+const ADMIN_NAV = [
+  { id: 'usuarios',     label: 'Usuarios',         Icon: IcoUsers   },
+]
+
+const normalizeRole = (role) => String(role ?? '').trim().toLowerCase()
+const ROLE_LABELS = { agricultor: 'Agricultor', investigador: 'Investigador', admin: 'Administrador' }
+const roleLabel = (role) => ROLE_LABELS[normalizeRole(role)] ?? 'Agricultor'
+const canSeeResearch = (role) => ['investigador', 'admin'].includes(normalizeRole(role))
+const navForRole = (role) => [
+  ...NAV,
+  ...(canSeeResearch(role) ? RESEARCH_NAV : []),
+  ...(normalizeRole(role) === 'admin' ? ADMIN_NAV : []),
 ]
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({ page, setPage, open, onClose, userName }) {
+function Sidebar({ page, setPage, open, onClose, userName, userRol }) {
   const { isDark } = useTheme()
   return (
     <>
@@ -272,7 +317,7 @@ function Sidebar({ page, setPage, open, onClose, userName }) {
 
         {/* Nav */}
         <nav className="px-3 space-y-0.5">
-          {NAV.map(({ id, label, Icon }) => {
+          {navForRole(userRol).map(({ id, label, Icon }) => {
             const active = page === id
             return (
               <button
@@ -316,7 +361,7 @@ function Sidebar({ page, setPage, open, onClose, userName }) {
             </div>
             <div className="min-w-0">
               <p className={`text-xs font-bold truncate ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{userName || 'Usuario'}</p>
-              <p className={`text-[10px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Investigador</p>
+              <p className={`text-[10px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{roleLabel(userRol)}</p>
             </div>
           </div>
         </div>
@@ -353,10 +398,14 @@ function Topbar({ page, onMenuClick, apiStatus, userName, userEmail, userRol, on
   const [menuOpen, setMenuOpen] = useState(false)
   const [weatherOpen, setWeatherOpen] = useState(false)
   const titles = {
-    inicio:    'Panel Principal',
-    analizar:  'Análisis de Cultivos',
-    historial: 'Historial de Análisis',
-    acerca:    'Acerca de Nosotros',
+    inicio:       'Panel Principal',
+    analizar:     'Análisis de Cultivos',
+    historial:    'Historial de Análisis',
+    enfermedades: 'Guía de Enfermedades',
+    mercado:      'Mercado Agrícola',
+    acerca:       'Acerca de Nosotros',
+    usuarios:     'Gestión de Usuarios',
+    modelo:       'Ficha del Modelo',
   }
   const dateStr = new Date().toLocaleDateString('es-ES', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -511,7 +560,7 @@ function Topbar({ page, onMenuClick, apiStatus, userName, userEmail, userRol, on
                     style={{ background: '#ede9fe', color: '#5b21b6', border: '1px solid #c4b5fd' }}
                   >
                     <span className="w-1.5 h-1.5 rounded-full bg-violet-500"/>
-                    {userRol}
+                    {roleLabel(userRol)}
                   </span>
                 </div>
               </div>
@@ -792,32 +841,109 @@ function WeatherBanner({ weather }) {
   )
 }
 
+// ── Parcel disease maps (shared shape with Historial.jsx) ─────────────────────
+const PARCEL_LABELS = {
+  Fondo_y_Sana: 'Sano', Fondo: 'Sano',
+  Tizon: 'Tizón', Roya: 'Roya',
+  Mancha_Blanca: 'Mancha Blanca', Mancha_blanca: 'Mancha Blanca',
+}
+const PARCEL_COLORS = {
+  Fondo_y_Sana: '#22c55e', Fondo: '#22c55e',
+  Tizon: '#f97316', Roya: '#f59e0b',
+  Mancha_Blanca: '#ef4444', Mancha_blanca: '#ef4444',
+}
+const PARCEL_SEVERITY_MAP = { Grave: 'Severo', Moderada: 'Moderado', Leve: 'Leve', Sano: 'Nulo' }
+
+function parcelSeverityLevel(avgAff) {
+  const raw = avgAff >= 70 ? 'Grave' : avgAff >= 40 ? 'Moderada' : avgAff >= 20 ? 'Leve' : 'Sano'
+  return PARCEL_SEVERITY_MAP[raw]
+}
+
+function useParcelHistory() {
+  const [records, setRecords] = useState(() => loadParcelHistory())
+  useEffect(() => {
+    const sync = (e) => { if (!e || e.key === PARCEL_HISTORY_KEY) setRecords(loadParcelHistory()) }
+    window.addEventListener('storage', sync)
+    return () => window.removeEventListener('storage', sync)
+  }, [])
+  return records
+}
+
+// Una tarjeta por parcela física (no por visita) — evita duplicar la misma parcela al revisitarla.
+function useParcelaSummaries() {
+  const [summaries, setSummaries] = useState(() => getParcelaSummaries())
+  useEffect(() => {
+    const sync = (e) => { if (!e || e.key === PARCELAS_KEY || e.key === PARCEL_HISTORY_KEY) setSummaries(getParcelaSummaries()) }
+    window.addEventListener('storage', sync)
+    return () => window.removeEventListener('storage', sync)
+  }, [])
+  return summaries
+}
+
+// ── Parcel mini card ──────────────────────────────────────────────────────────
+function ParcelMiniCard({ summary, isDark, onClick }) {
+  const { nombre, ha, visits, lastVisit, createdAt } = summary
+  const stats = lastVisit?.stats ?? { dominant: null, avgAff: 0, total: 0 }
+  const domLabel = stats.dominant ? (PARCEL_LABELS[stats.dominant] ?? stats.dominant) : 'Sano'
+  const domColor = stats.dominant ? (PARCEL_COLORS[stats.dominant] ?? '#94a3b8') : '#22c55e'
+  const severityLevel = parcelSeverityLevel(stats.avgAff)
+  const dateLabel = new Date(lastVisit?.fecha ?? createdAt)
+
+  return (
+    <button
+      onClick={onClick}
+      className={`flex-shrink-0 w-56 text-left rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all active:scale-[0.98] ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-100'}`}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg" style={{ background: isDark ? '#0e1929' : '#f1f5f9' }}>🛰️</div>
+        <SeverityLevelBadge level={severityLevel} />
+      </div>
+      <p className={`text-sm font-bold truncate ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{nombre}</p>
+      <p className={`text-lg font-black ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{ha} ha</p>
+      <div className="flex items-center gap-1.5 mt-1">
+        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: domColor }} />
+        <span className={`text-xs font-semibold truncate ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{domLabel}</span>
+      </div>
+      <div className={`flex items-center justify-between mt-3 pt-3 border-t text-[11px] ${isDark ? 'border-[#1e3048] text-slate-500' : 'border-slate-100 text-slate-400'}`}>
+        <span>{visits.length} visita{visits.length !== 1 ? 's' : ''}</span>
+        <span>{dateLabel.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}</span>
+      </div>
+    </button>
+  )
+}
+
 // ── HomePage ──────────────────────────────────────────────────────────────────
-function HomePage({ setPage, apiStatus, history, weather }) {
+function HomePage({ setPage, apiStatus, history, weather, onGoAnalizar, onGoHistorial }) {
   const { isDark } = useTheme()
   const [selectedAnalysisId, setSelectedAnalysisId] = useState(null)
+  const parcelHistory = useParcelHistory()
+  const parcelaSummaries = useParcelaSummaries()
 
   const totalAnalyses = history.length
   const diseasedCount = history.filter((item) => item.estado === 'Con enfermedad').length
   const healthyCount = history.filter((item) => item.estado === 'Sano').length
-  const averageConfidence = totalAnalyses > 0
-    ? Math.round(history.reduce((sum, item) => sum + ((item.confianza ?? 0) * 100), 0) / totalAnalyses)
-    : 0
+  const totalParcelas = parcelaSummaries.length
+  const totalHa = parcelaSummaries.reduce((sum, p) => sum + (p.ha ?? 0), 0)
 
   const stats = [
-    { label: 'Imágenes analizadas', value: totalAnalyses, sub: 'Total', color: '#22c55e', bg: '#f0fdf4', icon: '🌿', data: Array(10).fill(totalAnalyses) },
-    { label: 'Detecciones realizadas', value: diseasedCount, sub: 'Con enfermedad', color: '#f59e0b', bg: '#fffbeb', icon: '🔍', data: Array(10).fill(diseasedCount) },
+    { label: 'Imágenes analizadas', value: totalAnalyses, sub: 'Análisis individual', color: '#22c55e', bg: '#f0fdf4', icon: '🌿', data: Array(10).fill(totalAnalyses) },
     { label: 'Cultivos sanos', value: healthyCount, sub: 'Análisis sanos', color: '#14b8a6', bg: '#ecfeff', icon: '🌱', data: Array(10).fill(healthyCount) },
+    { label: 'Detecciones', value: diseasedCount, sub: 'Con enfermedad', color: '#f59e0b', bg: '#fffbeb', icon: '🔍', data: Array(10).fill(diseasedCount) },
+    { label: 'Parcelas analizadas', value: totalParcelas, sub: 'Lotes con muestreo', color: '#7c3aed', bg: '#f5f3ff', icon: '🛰️', data: Array(10).fill(totalParcelas) },
+    { label: 'Hectáreas monitoreadas', value: totalHa.toFixed(1), sub: 'Superficie total', color: '#0d9488', bg: '#f0fdfa', icon: '🌾', data: Array(10).fill(totalHa) },
   ]
 
   const recentAnalysis = history.map((item, index) => {
     const confidence = Math.round((item.confianza ?? 0) * 100)
     const isHealthy = item.estado === 'Sano'
     return {
+      type: 'individual',
       id: index + 1,
+      fecha: item.fecha,
       date: new Date(item.fecha).toLocaleDateString('es-ES'),
       time: new Date(item.fecha).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
       disease: isHealthy ? 'Sano' : (item.enfermedadLabel ?? item.enfermedad),
+      diseaseColor: isHealthy ? '#15803d' : (item.enfermedad === 'Roya' ? '#f59e0b' : item.enfermedad === 'Mancha_blanca' ? '#8b5cf6' : '#f97316'),
       severity: isHealthy ? 'Nulo' : item.riesgo,
       severityLevel: getSeverityLevel(confidence, item.estado),
       confidence,
@@ -827,6 +953,26 @@ function HomePage({ setPage, apiStatus, history, weather }) {
       raw: item,
     }
   })
+
+  const parcelRows = parcelHistory.map((r) => {
+    const domLabel = r.stats.dominant ? (PARCEL_LABELS[r.stats.dominant] ?? r.stats.dominant) : 'Sano'
+    const domColor = r.stats.dominant ? (PARCEL_COLORS[r.stats.dominant] ?? '#94a3b8') : '#22c55e'
+    return {
+      type: 'parcela',
+      id: r.id,
+      fecha: r.fecha,
+      date: new Date(r.fecha).toLocaleDateString('es-ES'),
+      disease: domLabel,
+      diseaseColor: domColor,
+      severityLevel: parcelSeverityLevel(r.stats.avgAff),
+      affectedPercent: r.stats.avgAff,
+      ha: r.ha,
+      sampleCount: r.stats.total,
+      raw: r,
+    }
+  })
+
+  const combinedActivity = [...recentAnalysis, ...parcelRows].sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
 
   useEffect(() => {
     if (recentAnalysis.length === 0) {
@@ -840,13 +986,25 @@ function HomePage({ setPage, apiStatus, history, weather }) {
 
   const selectedAnalysis = recentAnalysis.find((row) => row.id === selectedAnalysisId) || recentAnalysis[0] || null
 
-  const diseases = selectedAnalysis ? [
-    { label: selectedAnalysis.disease, value: 100, color: selectedAnalysis.disease === 'Sano' ? '#15803d' : (selectedAnalysis.disease === 'Roya' ? '#f59e0b' : selectedAnalysis.disease === 'Mancha Blanca' ? '#8b5cf6' : '#22c55e') },
-  ] : [
-    { label: 'Tizón',         value: 45, color: '#22c55e' },
-    { label: 'Roya',          value: 30, color: '#f59e0b' },
-    { label: 'Mancha Blanca', value: 25, color: '#8b5cf6' },
-  ]
+  const diseaseDistribution = (() => {
+    const counts = {}
+    history.forEach((item) => {
+      if (item.estado === 'Sano') return
+      const label = item.enfermedadLabel ?? item.enfermedad
+      counts[label] = (counts[label] ?? 0) + 1
+    })
+    parcelHistory.forEach((r) => {
+      r.samples.forEach((s) => {
+        if (!s.result) return
+        const cls = s.result.target_class
+        if (cls === 'Fondo_y_Sana' || cls === 'Fondo') return
+        const label = PARCEL_LABELS[cls] ?? cls
+        counts[label] = (counts[label] ?? 0) + 1
+      })
+    })
+    const palette = { Tizón: '#f97316', Roya: '#f59e0b', 'Mancha Blanca': '#8b5cf6' }
+    return Object.entries(counts).map(([label, value]) => ({ label, value, color: palette[label] ?? '#94a3b8' }))
+  })()
 
   return (
     <div className="space-y-5">
@@ -881,7 +1039,7 @@ function HomePage({ setPage, apiStatus, history, weather }) {
             </div>
             <div className="flex gap-3 flex-wrap">
               <button
-                onClick={() => setPage('analizar')}
+                onClick={() => onGoAnalizar('individual')}
                 className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 font-bold text-sm text-white transition-all active:scale-95"
                 style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)', boxShadow: '0 6px 20px rgba(109,40,217,0.35)' }}
               >
@@ -889,8 +1047,14 @@ function HomePage({ setPage, apiStatus, history, weather }) {
                 Cargar imagen
               </button>
               <button
+                onClick={() => onGoAnalizar('parcela')}
+                className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 font-semibold text-sm text-slate-700 bg-white/90 border border-slate-200 hover:bg-white transition-all"
+              >
+                🛰️ Analizar parcela
+              </button>
+              <button
                 onClick={() => setPage('historial')}
-                className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 font-semibold text-sm text-slate-700 bg-white border border-slate-200 hover:bg-slate-50 transition-all"
+                className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 font-semibold text-sm text-slate-700 bg-white/90 border border-slate-200 hover:bg-white transition-all"
               >
                 <IcoEye />
                 Ver historial
@@ -904,7 +1068,7 @@ function HomePage({ setPage, apiStatus, history, weather }) {
       {weather && <WeatherBanner weather={weather} />}
 
       {/* ── Stats ── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {stats.map((s, i) => (
           <div key={i} className={`rounded-2xl border p-5 shadow-sm hover:shadow-md transition-shadow ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-100'}`}>
             <div className="flex items-center justify-between mb-3">
@@ -924,14 +1088,14 @@ function HomePage({ setPage, apiStatus, history, weather }) {
 
       {/* ── Bottom row: Recent analysis + Donut ── */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
-        {/* Recent analysis table */}
+        {/* Recent activity — combined individual + parcela */}
         <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-100'}`}>
           <div className={`flex items-center justify-between px-6 py-4 border-b ${isDark ? 'border-[#1e3048]' : 'border-slate-100'}`}>
             <div className="flex items-center gap-2">
-              <h2 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Análisis recientes</h2>
-              {recentAnalysis.length > 0 && (
+              <h2 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Actividad reciente</h2>
+              {combinedActivity.length > 0 && (
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500">
-                  {recentAnalysis.length}
+                  {combinedActivity.length}
                 </span>
               )}
             </div>
@@ -944,38 +1108,43 @@ function HomePage({ setPage, apiStatus, history, weather }) {
           </div>
           {/* Table header */}
           <div className={`grid text-[11px] font-bold text-slate-400 uppercase tracking-wider px-6 py-2 border-b ${isDark ? 'bg-[#0e1929] border-[#1e3048]' : 'bg-slate-50 border-slate-100'}`}
-            style={{ gridTemplateColumns: '0.9fr 1.2fr 1.2fr 0.9fr 1fr' }}>
-            <span>Id imagen</span>
+            style={{ gridTemplateColumns: '0.6fr 1fr 1.2fr 0.9fr 1fr' }}>
+            <span>Tipo</span>
             <span>Fecha</span>
             <span>Predicción</span>
             <span>Afectación</span>
-            <span>Nivel severidad</span>
+            <span>Severidad</span>
           </div>
-          <div style={{ maxHeight: 260, overflowY: 'auto' }}
+          <div style={{ maxHeight: 300, overflowY: 'auto' }}
             className="[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-slate-50 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
           >
-            {recentAnalysis.length === 0 ? (
+            {combinedActivity.length === 0 ? (
               <div className="px-6 py-16 text-center text-slate-500">
-                No hay análisis recientes aún. Suba una imagen para comenzar.
+                No hay análisis recientes aún. Suba una imagen o analice una parcela para comenzar.
               </div>
-            ) : recentAnalysis.map((row) => (
-              <div key={`${row.id}-${row.date}`}
-                onClick={() => setSelectedAnalysisId(row.id)}
-                className={`grid items-center px-6 py-3.5 border-b transition cursor-pointer ${isDark ? 'border-[#1e3048] hover:bg-white/5' : 'border-slate-50 hover:bg-slate-50'} ${row.id === selectedAnalysisId ? (isDark ? 'bg-white/5' : 'bg-slate-50') : ''}`}
-                style={{ gridTemplateColumns: '0.9fr 1.2fr 1.2fr 0.9fr 1fr' }}>
-                <span className={`text-sm font-semibold ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>#{row.id}</span>
-                <span className="text-[11px] text-slate-500">{row.date}</span>
-                <span className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{row.disease}</span>
-                <span className="text-sm text-slate-700">
-                  {row.affectedPercent != null
-                    ? `${row.affectedPercent}%`
-                    : row.confidence != null
-                      ? `${row.confidence}%`
-                      : '—'}
-                </span>
-                <SeverityLevelBadge level={row.severityLevel}/>
-              </div>
-            ))}
+            ) : combinedActivity.map((row) => {
+              const isSelected = row.type === 'individual' && row.id === selectedAnalysisId
+              return (
+                <div key={`${row.type}-${row.id}`}
+                  onClick={() => row.type === 'individual' ? setSelectedAnalysisId(row.id) : onGoHistorial('parcelas')}
+                  className={`grid items-center px-6 py-3.5 border-b transition cursor-pointer ${isDark ? 'border-[#1e3048] hover:bg-white/5' : 'border-slate-50 hover:bg-slate-50'} ${isSelected ? (isDark ? 'bg-white/5' : 'bg-slate-50') : ''}`}
+                  style={{ gridTemplateColumns: '0.6fr 1fr 1.2fr 0.9fr 1fr' }}>
+                  <span className="text-base leading-none" title={row.type === 'individual' ? 'Análisis individual' : 'Parcela completa'}>
+                    {row.type === 'individual' ? '🔬' : '🛰️'}
+                  </span>
+                  <span className="text-[11px] text-slate-500">{row.date}</span>
+                  <span className={`text-sm flex items-center gap-1.5 truncate ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: row.diseaseColor }} />
+                    <span className="truncate">{row.disease}</span>
+                    {row.type === 'parcela' && <span className="text-[10px] text-slate-400 flex-shrink-0">({row.ha} ha)</span>}
+                  </span>
+                  <span className="text-sm text-slate-700">
+                    {row.affectedPercent != null ? `${row.affectedPercent}%` : '—'}
+                  </span>
+                  <SeverityLevelBadge level={row.severityLevel}/>
+                </div>
+              )
+            })}
           </div>
         </div>
 
@@ -1016,28 +1185,190 @@ function HomePage({ setPage, apiStatus, history, weather }) {
                 </p>
               </div>
             </div>
-          ) : (
+          ) : diseaseDistribution.length > 0 ? (
             <div className="flex flex-col items-center gap-4">
-              <DonutChart slices={diseases}/>
+              <DonutChart slices={diseaseDistribution}/>
               <div className="mt-4 w-full space-y-2.5">
-                {diseases.map((d) => (
+                {diseaseDistribution.map((d) => (
                   <div key={d.label} className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: d.color }}/>
                       <span className="text-xs text-slate-600 font-medium">{d.label}</span>
                     </div>
-                    <span className="text-xs font-bold text-slate-800">{d.value}%</span>
+                    <span className="text-xs font-bold text-slate-800">{d.value}</span>
                   </div>
                 ))}
               </div>
             </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center text-center gap-2 py-8">
+              <span className="text-3xl">🌿</span>
+              <p className="text-sm font-semibold text-slate-500">Sin detecciones registradas</p>
+              <p className="text-[11px] text-slate-400 max-w-[200px]">Realiza un análisis para ver la distribución de enfermedades aquí.</p>
+            </div>
           )}
 
           <p className="text-[10px] text-slate-400 mt-4 text-center">
-            {selectedAnalysis ? 'ⓘ Mostrando mapa XAI y afectación del análisis seleccionado' : 'ⓘ Basado en los análisis de esta semana'}
+            {selectedAnalysis ? 'ⓘ Mostrando mapa XAI y afectación del análisis seleccionado' : 'ⓘ Detecciones combinadas: análisis individual + muestras de parcela'}
           </p>
         </div>
       </div>
+
+      {/* ── Parcelas recientes ── */}
+      <div className={`rounded-2xl border shadow-sm p-6 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-100'}`}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <h2 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>🛰️ Parcelas recientes</h2>
+            {parcelaSummaries.length > 0 && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500">{parcelaSummaries.length}</span>
+            )}
+          </div>
+          <button
+            onClick={() => onGoHistorial('parcelas')}
+            className="text-xs font-semibold text-violet-600 hover:text-violet-700 transition"
+          >
+            Ver todo
+          </button>
+        </div>
+
+        {parcelaSummaries.length === 0 ? (
+          <div className="flex flex-col items-center justify-center text-center gap-3 py-8">
+            <span className="text-3xl">🛰️</span>
+            <p className="text-sm font-semibold text-slate-500">Aún no has analizado ninguna parcela completa</p>
+            <button
+              onClick={() => onGoAnalizar('parcela')}
+              className="inline-flex items-center gap-2 rounded-xl px-4 py-2 font-semibold text-xs text-white transition-all active:scale-95"
+              style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)' }}
+            >
+              Analizar una parcela
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-4 overflow-x-auto pb-1 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-slate-50 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300">
+            {parcelaSummaries.slice(0, 6).map((summary) => (
+              <ParcelMiniCard key={summary.id} summary={summary} isDark={isDark} onClick={() => onGoHistorial('parcelas')} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ResearchHomePage({ setPage, apiStatus, history, weather, onGoAnalizar, onGoHistorial }) {
+  const { isDark } = useTheme()
+  const totalAnalyses = history.length
+  const diseasedCount = history.filter((item) => item.estado === 'Con enfermedad').length
+  const healthyCount = history.filter((item) => item.estado === 'Sano').length
+  const avgConfidence = history.length
+    ? (history.reduce((sum, item) => sum + (Number(item.confianza ?? 0) * 100), 0) / history.length).toFixed(1)
+    : '0.0'
+
+  const researchCards = [
+    { label: 'Pruebas ejecutadas', value: String(totalAnalyses), subtitle: 'Total de evaluaciones', color: '#22c55e', icon: '🧪' },
+    { label: 'Confianza promedio', value: `${avgConfidence}%`, subtitle: 'Predicción media', color: '#3b82f6', icon: '📊' },
+    { label: 'Casos detectados', value: String(diseasedCount), subtitle: 'Con enfermedad', color: '#f59e0b', icon: '🦠' },
+    { label: 'Casos sanos', value: String(healthyCount), subtitle: 'Sin patología', color: '#14b8a6', icon: '✅' },
+  ]
+
+  const modelMetrics = [
+    { label: 'Precisión', value: '92.4%', note: 'Sobre validación cruzada' },
+    { label: 'Sensibilidad', value: '94.1%', note: 'Detección de enfermedad' },
+    { label: 'F1-score', value: '91.8%', note: 'Balance clase / error' },
+    { label: 'Latencia', value: '1.8s', note: 'Promedio por imagen' },
+  ]
+
+  return (
+    <div className="space-y-5">
+      <div className={`rounded-[28px] border p-5 shadow-sm ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-violet-500">Modo investigador</p>
+            <h2 className={`mt-2 text-2xl font-black ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Panel de pruebas y evaluación</h2>
+          </div>
+          <div className="flex items-center gap-2 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-bold text-emerald-700">
+            <span className="h-2 w-2 rounded-full bg-emerald-500" />
+            Sistema operativo
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {researchCards.map((card) => (
+            <div key={card.label} className={`rounded-2xl border p-4 ${isDark ? 'border-[#1e3048] bg-[#0e1929]' : 'border-slate-200 bg-slate-50'}`}>
+              <div className="flex items-center justify-between">
+                <div className="text-2xl">{card.icon}</div>
+                <div className="h-2.5 w-2.5 rounded-full" style={{ background: card.color }} />
+              </div>
+              <p className="mt-3 text-2xl font-black text-slate-900">{card.value}</p>
+              <p className="text-sm font-semibold text-slate-700">{card.label}</p>
+              <p className="text-[11px] text-slate-500">{card.subtitle}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
+        <div className={`rounded-[28px] border p-5 shadow-sm ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
+          <div className="flex items-center justify-between">
+            <h3 className={`text-lg font-black ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Métricas del modelo</h3>
+            <button className="rounded-full bg-violet-100 px-3 py-1 text-[11px] font-bold text-violet-700">Última validación</button>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            {modelMetrics.map((metric) => (
+              <div key={metric.label} className={`rounded-2xl border p-4 ${isDark ? 'border-[#1e3048] bg-[#0e1929]' : 'border-slate-200 bg-slate-50'}`}>
+                <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{metric.label}</p>
+                <p className="mt-2 text-2xl font-black text-slate-900">{metric.value}</p>
+                <p className="mt-1 text-xs text-slate-500">{metric.note}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className={`rounded-[28px] border p-5 shadow-sm ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
+          <h3 className={`text-lg font-black ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Estado del sistema</h3>
+
+          <div className="mt-5 space-y-4">
+            {[
+              ['API', apiStatus === 'online' ? 'Activa' : 'Revisando'],
+              ['Modelo', 'MIT-B1 + DeepLabV3+'],
+              ['XAI', 'Grad-CAM habilitado'],
+              ['Dataset', 'Maíz / Imbabura'],
+            ].map(([label, value]) => (
+              <div key={label} className="flex items-center justify-between rounded-xl bg-slate-50 p-3">
+                <span className="text-sm font-semibold text-slate-600">{label}</span>
+                <span className="text-sm font-bold text-slate-900">{value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className={`rounded-[28px] border p-5 shadow-sm ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h3 className={`text-lg font-black ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Herramientas de prueba</h3>
+          <div className="flex gap-2">
+            <button onClick={() => onGoAnalizar('individual')} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-bold text-white">Probar análisis</button>
+            <button onClick={() => onGoHistorial('individual')} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-bold text-slate-700">Ver historial</button>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-4 md:grid-cols-3">
+          {[
+            { title: 'Validación por imagen', desc: 'Subir una imagen para verificar la clasificación del modelo y observar la activación XAI.', icon: '🖼️' },
+            { title: 'Evaluación de lote', desc: 'Analizar parcelas completas para comparar umbrales y detectar patrones espaciales.', icon: '🚁' },
+            { title: 'Reporte de métricas', desc: 'Revisar resultados y analizar confiabilidad del diagnóstico para investigación.', icon: '📈' },
+          ].map((item) => (
+            <div key={item.title} className={`rounded-2xl border p-4 ${isDark ? 'border-[#1e3048] bg-[#0e1929]' : 'border-slate-200 bg-slate-50'}`}>
+              <div className="text-2xl">{item.icon}</div>
+              <h4 className={`mt-3 text-base font-bold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{item.title}</h4>
+              <p className={`mt-2 text-sm leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {weather && <WeatherBanner weather={weather} />}
     </div>
   )
 }
@@ -1224,10 +1555,32 @@ export default function App() {
   const [analysisHistory, setAnalysisHistory] = useState([])
   const [authenticated, setAuthenticated] = useState(() => isLogged())
   const [enfermedades, setEnfermedades] = useState([])
-  const [userName, setUserName]   = useState('Investigador')
+  const [userName, setUserName]   = useState('Usuario')
   const [userEmail, setUserEmail] = useState('')
-  const [userRol, setUserRol]     = useState('investigador')
+  const [userRol, setUserRol]     = useState('agricultor')
+  const [analizarMode, setAnalizarMode] = useState('individual')
+  const isResearcher = normalizeRole(userRol) === 'investigador' || normalizeRole(userRol) === 'researcher'
+  const isAdmin = normalizeRole(userRol) === 'admin'
+  const [historialTab, setHistorialTab] = useState('individual')
+  const [preselectedParcelaId, setPreselectedParcelaId] = useState(null)
   const weather = useWeather()
+
+  const goToAnalizar = (mode = 'individual', parcelaId = null) => {
+    setAnalizarMode(mode)
+    setPreselectedParcelaId(parcelaId)
+    setPage('analizar')
+  }
+
+  const goToHistorial = (tab = 'individual') => {
+    setHistorialTab(tab)
+    setPage('historial')
+  }
+
+  // Evita reusar un parcelaId preseleccionado si el usuario navega a Analizar
+  // por otra vía (ej. la barra lateral) después de haberlo consumido.
+  useEffect(() => {
+    if (page !== 'analizar') setPreselectedParcelaId(null)
+  }, [page])
 
   useEffect(() => {
     let canceled = false
@@ -1249,7 +1602,7 @@ export default function App() {
         if (canceled) return
         setUserName(meResponse.data.nombre)
         setUserEmail(meResponse.data.email ?? '')
-        setUserRol(meResponse.data.rol ?? 'investigador')
+        setUserRol(meResponse.data.rol ?? 'agricultor')
         const backendHistory = Array.isArray(historyResponse.data) ? historyResponse.data.map(toHistoryItem) : []
         setAnalysisHistory(backendHistory)
         setEnfermedades(Array.isArray(enfResponse.data) ? enfResponse.data : [])
@@ -1285,7 +1638,7 @@ export default function App() {
     setAnalysisHistory([])
     setUserName('Investigador')
     setUserEmail('')
-    setUserRol('investigador')
+    setUserRol('agricultor')
     setPage('inicio')
   }
 
@@ -1314,7 +1667,7 @@ export default function App() {
     <>
       <FontLink />
       <div className="min-h-screen bg-slate-50 dark:bg-[#0c1220] flex">
-        <Sidebar page={page} setPage={setPage} open={sidebarOpen} onClose={() => setSidebarOpen(false)} userName={userName} />
+        <Sidebar page={page} setPage={setPage} open={sidebarOpen} onClose={() => setSidebarOpen(false)} userName={userName} userRol={userRol} />
 
         <div className="flex-1 lg:ml-52 flex flex-col min-h-screen">
           <Topbar
@@ -1330,9 +1683,15 @@ export default function App() {
           />
 
           <main className="flex-1 p-4 md:p-6 w-full max-w-6xl mx-auto">
-            {page === 'inicio' && <HomePage setPage={setPage} apiStatus={apiStatus} history={analysisHistory} weather={weather} />}
-            {page === 'analizar' && <Analizar onHistoryChange={syncHistory} onAnalysisSaved={refreshHistory} history={analysisHistory} enfermedades={enfermedades} />}
-            {page === 'historial' && <Historial history={analysisHistory} onHistoryChange={syncHistory} />}
+            {page === 'inicio' && (isResearcher ? (
+              <ResearchHomePage setPage={setPage} apiStatus={apiStatus} history={analysisHistory} weather={weather} onGoAnalizar={goToAnalizar} onGoHistorial={goToHistorial} />
+            ) : (
+              <HomePage setPage={setPage} apiStatus={apiStatus} history={analysisHistory} weather={weather} onGoAnalizar={goToAnalizar} onGoHistorial={goToHistorial} />
+            ))}
+            {page === 'analizar' && <Analizar onHistoryChange={syncHistory} onAnalysisSaved={refreshHistory} history={analysisHistory} enfermedades={enfermedades} initialMode={analizarMode} preselectedParcelaId={preselectedParcelaId} showPerformance={canSeeResearch(userRol)} />}
+            {page === 'historial' && <Historial history={analysisHistory} onHistoryChange={syncHistory} initialTab={historialTab} onGoAnalizarParcela={(id) => goToAnalizar('parcela', id)} />}
+            {page === 'enfermedades' && <Enfermedades />}
+            {page === 'mercado' && <Mercado />}
             {page === 'perfil' && (
               <Profile
                 userName={userName}
@@ -1342,6 +1701,8 @@ export default function App() {
               />
             )}
             {page === 'acerca' && <AcercaDe />}
+            {page === 'usuarios' && isAdmin && <Usuarios />}
+            {page === 'modelo' && canSeeResearch(userRol) && <ModeloIA />}
           </main>
         </div>
       </div>

@@ -59,6 +59,7 @@ export default function Profile({ userName, userEmail, userRol, onNameChange }) 
   }
 
   const initial = nombre ? nombre.charAt(0).toUpperCase() : 'U'
+  const rolLabel = { agricultor: 'Agricultor', investigador: 'Investigador', admin: 'Administrador' }[userRol] ?? userRol ?? '—'
 
   return (
     <div className="space-y-6 fade-up max-w-2xl mx-auto">
@@ -82,7 +83,7 @@ export default function Profile({ userName, userEmail, userRol, onNameChange }) 
               style={{ background: '#ede9fe', color: '#5b21b6', border: '1px solid #c4b5fd' }}
             >
               <span className="w-1.5 h-1.5 rounded-full bg-violet-500"/>
-              {userRol}
+              {rolLabel}
             </span>
           </div>
         </div>
@@ -90,7 +91,7 @@ export default function Profile({ userName, userEmail, userRol, onNameChange }) 
         <div className={`grid grid-cols-3 divide-x border-t ${isDark ? 'divide-[#1e3048] border-[#1e3048]' : 'divide-slate-100 border-slate-100'}`}>
           {[
             { label: 'Correo',  value: userEmail || '—' },
-            { label: 'Rol',     value: userRol   || '—' },
+            { label: 'Rol',     value: rolLabel },
             { label: 'Estado',  value: 'Activo'         },
           ].map((d, i) => (
             <div key={i} className="px-5 py-3 text-center">

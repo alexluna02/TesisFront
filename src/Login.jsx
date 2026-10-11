@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
 import { useGoogleLogin } from '@react-oauth/google'
-import foto3 from './Imagenes/foto3.png'
+import foto3 from './Imagenes/foto3.webp'
 import { loginRequest, registerRequest, saveAuthData, googleLoginRequest, forgotPasswordRequest, resetPasswordRequest } from './api.js'
 
 function GoogleIcon() {
