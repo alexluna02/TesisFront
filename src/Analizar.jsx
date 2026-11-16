@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { predictXai, predictSegmentation, createAnalisis } from './api.js'
 import { exportAnalisisPDF } from './exportPDF.js'
 import { useTheme } from './ThemeContext.jsx'
+import { affectedFromRecord, affectedPercent, severityFromRecord, severityKey, severityOf } from './severity.js'
 import { AnalysisTimingPanel, prepareUploadFile, timedRequest, timingFrom, useModelLoadTime } from './Rendimiento.jsx'
 import AnalizarParcela from './AnalizarParcela.jsx'
 
@@ -14,7 +15,7 @@ const DISEASES = {
   Mancha_blanca: { label: 'Mancha Blanca',  color: '#991b1b', gradFrom: '#fef2f2', gradTo: '#fee2e2', border: '#fca5a5', barColor: '#ef4444' },
 }
 
-const DISEASE_IDS = { Fondo_y_Sana: 1, Tizon: 2, Roya: 3, Mancha_Blanca: 4 }
+const DISEASE_IDS = { Fondo: 1, Fondo_y_Sana: 1, Tizon: 2, Roya: 3, Mancha_blanca: 4, Mancha_Blanca: 4 }
 
 const RECOMMENDATIONS = {
   Fondo_y_Sana: [
@@ -136,9 +137,6 @@ const FUMIGATION_STEPS = [
   { num: 8, icon: '📋', title: 'Registrar cada aplicación', desc: 'Anote: fecha y hora, producto y dosis utilizada, área tratada en hectáreas, condiciones climáticas y persona responsable. Consulte la etiqueta para el período de carencia antes de la cosecha (Mancozeb: 7 días, Propiconazol: 14 días, Tebuconazol: 28 días, Clorotalonil: 7 días).' },
 ]
 
-const getRisk    = (conf) => conf >= 85 ? 'Alto' : conf >= 60 ? 'Medio' : 'Bajo'
-const getSeverity = (conf, cls) => cls === 'Fondo_y_Sana' ? 'leve' : conf < 5 ? 'leve' : conf <= 15 ? 'moderada' : 'grave'
-
 const fileToDataUrl = (file) => new Promise((resolve, reject) => {
   const reader = new FileReader()
   reader.onload  = () => resolve(reader.result)
@@ -163,7 +161,7 @@ const compressImage = (file, maxWidth = 800, quality = 0.75) => new Promise((res
 })
 
 const mapAnalysisResponse = (record, RECS) => {
-  const confidence = Number(record.afectacion_pct || 0)
+  const confidence = affectedFromRecord(record)
   const diseaseName = record.enfermedad?.nombre ?? 'Desconocido'
   return {
     id: record.id,
@@ -172,7 +170,7 @@ const mapAnalysisResponse = (record, RECS) => {
     enfermedad: diseaseName,
     enfermedadLabel: DISEASES[diseaseName]?.label ?? diseaseName,
     confianza: confidence / 100,
-    riesgo: record.severidad === 'grave' ? 'Alto' : record.severidad === 'moderada' ? 'Medio' : 'Bajo',
+    severidad: severityFromRecord(record),
     cultivo: 'Maíz',
     recomendaciones: RECS[record.enfermedad?.nombre]?.map(r => r.body).join(' ') ?? '',
     xaiImage: record.grad_cam_url,
@@ -368,7 +366,7 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
   const isHealthy   = result?.target_class === 'Fondo_y_Sana' || result?.target_class === 'Fondo'
   const disease     = result ? DISEASES[result.target_class] : null
   const recs        = result ? (RECOMMENDATIONS[result.target_class] ?? RECOMMENDATIONS['Fondo_y_Sana']) : []
-  const risk        = result ? getRisk(result.confidence) : null
+  const severity    = result ? severityOf(result.target_class, result.confidence) : null
   const chemData    = result ? (CHEMICAL_TREATMENTS[result.target_class] ?? null) : null
 
   const previewUrlRef = useRef('')
@@ -398,7 +396,7 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
       await exportAnalisisPDF({
         diseaseLabel:    disease?.label ?? result.target_class,
         affectedPercent: result.confidence,
-        risk,
+        severity,
         fecha:           new Date().toISOString(),
         originalImg:     previewDataUrl,
         xaiImg:          result.xai_base64_png ? `data:image/png;base64,${result.xai_base64_png}` : null,
@@ -456,7 +454,8 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
         timedRequest(() => predictSegmentation(segFormData)),
       ])
       if (xaiOutcome.status !== 'fulfilled') throw xaiOutcome.reason
-      const data = xaiOutcome.value.response.data
+      const rawData = xaiOutcome.value.response.data
+      const data = { ...rawData, confidence: affectedPercent(rawData.target_class, rawData.confidence) }
       const segResponse = segOutcome.status === 'fulfilled' ? segOutcome.value.response : null
       setMaskBase64(segResponse?.data?.mask_base64_png ?? null)
       setTimings({
@@ -470,17 +469,16 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
       setResult(data)
 
       setStep(3)
-      const targetIdx     = Number(data.target_class_id) || null
+      const targetIdx     = Number(data.target_class_id)
       const enfermedadRow = (enfermedades || []).find((e) => Number(e.clase_idx) === targetIdx)
       const diseaseId     = enfermedadRow?.id ?? DISEASE_IDS[data.target_class]
-      const severity      = getSeverity(data.confidence, data.target_class)
       const xaiDataUrl    = data.xai_base64_png ? `data:image/png;base64,${data.xai_base64_png}` : null
 
       const savedResponse = await createAnalisis({
         imagen_url:     imageDataUrl,
         grad_cam_url:   xaiDataUrl,
         afectacion_pct: data.confidence,
-        severidad:      severity,
+        severidad:      severityKey(data.confidence),
         enfermedad_id:  diseaseId,
       })
 
@@ -754,12 +752,12 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
                       <span
                         className="rounded-full px-2.5 py-0.5 text-xs font-bold"
                         style={{
-                          background: risk === 'Alto' ? '#fef2f2' : risk === 'Medio' ? '#fffbeb' : '#f0fdf4',
-                          color:      risk === 'Alto' ? '#b91c1c' : risk === 'Medio' ? '#92400e' : '#15803d',
-                          border:     `1px solid ${risk === 'Alto' ? '#fecaca' : risk === 'Medio' ? '#fde68a' : '#bbf7d0'}`,
+                          background: severity === 'Grave' ? '#fef2f2' : severity === 'Moderada' ? '#fffbeb' : '#f0fdf4',
+                          color:      severity === 'Grave' ? '#b91c1c' : severity === 'Moderada' ? '#92400e' : '#15803d',
+                          border:     `1px solid ${severity === 'Grave' ? '#fecaca' : severity === 'Moderada' ? '#fde68a' : '#bbf7d0'}`,
                         }}
                       >
-                        Riesgo {risk}
+                        {isHealthy ? 'Sano' : `Severidad ${severity}`}
                       </span>
                       {!isHealthy && result.model_confidence !== undefined && (
                         <span

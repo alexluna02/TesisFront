@@ -7,6 +7,7 @@ import Mercado from './Mercado.jsx'
 import Profile from './Profile.jsx'
 import Usuarios from './Usuarios.jsx'
 import ModeloIA from './ModeloIA.jsx'
+import { affectedFromRecord, lotSeverity, severityFromRecord } from './severity.js'
 import Login from './Login.jsx'
 import foto3 from './Imagenes/foto3.webp'
 import { api, fetchMe, fetchAnalisis, logoutRequest, isLogged, clearAuthData } from './api.js'
@@ -639,24 +640,17 @@ function SeverityBadge({ level }) {
 
 function SeverityLevelBadge({ level }) {
   const map = {
-    Nulo:     { bg: '#e2e8f0', color: '#475569', border: '#cbd5e1' },
+    Sano:     { bg: '#e2e8f0', color: '#475569', border: '#cbd5e1' },
     Leve:     { bg: '#ecfdf5', color: '#15803d', border: '#bbf7d0' },
-    Moderado: { bg: '#fef3c7', color: '#b45309', border: '#fde68a' },
-    Severo:   { bg: '#fee2e2', color: '#b91c1c', border: '#fecaca' },
+    Moderada: { bg: '#fef3c7', color: '#b45309', border: '#fde68a' },
+    Grave:    { bg: '#fee2e2', color: '#b91c1c', border: '#fecaca' },
   }
-  const s = map[level] || map.Nulo
+  const s = map[level] || map.Sano
   return (
     <span className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold" style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
       {level}
     </span>
   )
-}
-
-function getSeverityLevel(confidencePercent, estado) {
-  if (estado === 'Sano') return 'Nulo'
-  if (confidencePercent < 5) return 'Leve'
-  if (confidencePercent <= 15) return 'Moderado'
-  return 'Severo'
 }
 
 // ── Disease dot ───────────────────────────────────────────────────────────────
@@ -852,13 +846,6 @@ const PARCEL_COLORS = {
   Tizon: '#f97316', Roya: '#f59e0b',
   Mancha_Blanca: '#ef4444', Mancha_blanca: '#ef4444',
 }
-const PARCEL_SEVERITY_MAP = { Grave: 'Severo', Moderada: 'Moderado', Leve: 'Leve', Sano: 'Nulo' }
-
-function parcelSeverityLevel(avgAff) {
-  const raw = avgAff >= 70 ? 'Grave' : avgAff >= 40 ? 'Moderada' : avgAff >= 20 ? 'Leve' : 'Sano'
-  return PARCEL_SEVERITY_MAP[raw]
-}
-
 function useParcelHistory() {
   const [records, setRecords] = useState(() => loadParcelHistory())
   useEffect(() => {
@@ -886,7 +873,7 @@ function ParcelMiniCard({ summary, isDark, onClick }) {
   const stats = lastVisit?.stats ?? { dominant: null, avgAff: 0, total: 0 }
   const domLabel = stats.dominant ? (PARCEL_LABELS[stats.dominant] ?? stats.dominant) : 'Sano'
   const domColor = stats.dominant ? (PARCEL_COLORS[stats.dominant] ?? '#94a3b8') : '#22c55e'
-  const severityLevel = parcelSeverityLevel(stats.avgAff)
+  const severityLevel = lotSeverity(stats.avgAff)
   const dateLabel = new Date(lastVisit?.fecha ?? createdAt)
 
   return (
@@ -944,8 +931,8 @@ function HomePage({ setPage, apiStatus, history, weather, onGoAnalizar, onGoHist
       time: new Date(item.fecha).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
       disease: isHealthy ? 'Sano' : (item.enfermedadLabel ?? item.enfermedad),
       diseaseColor: isHealthy ? '#15803d' : (item.enfermedad === 'Roya' ? '#f59e0b' : item.enfermedad === 'Mancha_blanca' ? '#8b5cf6' : '#f97316'),
-      severity: isHealthy ? 'Nulo' : item.riesgo,
-      severityLevel: getSeverityLevel(confidence, item.estado),
+      severity: isHealthy ? 'Nulo' : item.severidad,
+      severityLevel: item.severidad,
       confidence,
       xaiImage: item.xaiImage,
       affectedPercent: item.affectedPercent,
@@ -964,7 +951,7 @@ function HomePage({ setPage, apiStatus, history, weather, onGoAnalizar, onGoHist
       date: new Date(r.fecha).toLocaleDateString('es-ES'),
       disease: domLabel,
       diseaseColor: domColor,
-      severityLevel: parcelSeverityLevel(r.stats.avgAff),
+      severityLevel: lotSeverity(r.stats.avgAff),
       affectedPercent: r.stats.avgAff,
       ha: r.ha,
       sampleCount: r.stats.total,
@@ -1383,8 +1370,7 @@ const DISEASE_LABELS = {
 
 function toHistoryItem(record) {
   const diseaseName = record.enfermedad?.nombre ?? 'Desconocido'
-  const confidencePercent = record.afectacion_pct != null ? Number(record.afectacion_pct) : 0
-  const risk = record.severidad === 'grave' ? 'Alto' : record.severidad === 'moderada' ? 'Medio' : 'Bajo'
+  const confidencePercent = affectedFromRecord(record)
 
   return {
     id: record.id,
@@ -1393,7 +1379,7 @@ function toHistoryItem(record) {
     enfermedad: diseaseName,
     enfermedadLabel: DISEASE_LABELS[diseaseName] ?? diseaseName,
     confianza: confidencePercent / 100,
-    riesgo: risk,
+    severidad: severityFromRecord(record),
     cultivo: 'Maíz',
     recomendaciones: '',
     xaiImage: record.grad_cam_url,

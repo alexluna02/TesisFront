@@ -6,6 +6,7 @@ import { deleteAnalisis } from './api.js'
 import { exportAnalisisPDF } from './exportPDF.js'
 import { useTheme } from './ThemeContext.jsx'
 import { getParcelaSummaries, renameParcela, deleteParcela, deleteParcelVisit } from './AnalizarParcela.jsx'
+import { SEVERITY_PALETTE, lotSeverity, severityOf } from './severity.js'
 
 // ── Leaflet icon fix ──────────────────────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl
@@ -28,10 +29,11 @@ const DISEASE_COLORS = {
 }
 
 // ── Risk styles ───────────────────────────────────────────────────────────────
-const RISK = {
-  Alto:  { bg: '#fef2f2', border: '#fecaca', badge: '#fee2e2', text: '#b91c1c', dot: '#ef4444' },
-  Medio: { bg: '#fffbeb', border: '#fde68a', badge: '#fef3c7', text: '#b45309', dot: '#f59e0b' },
-  Bajo:  { bg: '#f0fdf4', border: '#bbf7d0', badge: '#dcfce7', text: '#15803d', dot: '#22c55e' },
+const SEVERITY_STYLES = {
+  Grave:    { bg: '#fef2f2', border: '#fecaca', badge: '#fee2e2', text: '#b91c1c', dot: '#ef4444' },
+  Moderada: { bg: '#fffbeb', border: '#fde68a', badge: '#fef3c7', text: '#b45309', dot: '#f59e0b' },
+  Leve:     { bg: '#f0fdf4', border: '#bbf7d0', badge: '#dcfce7', text: '#15803d', dot: '#22c55e' },
+  Sano:     { bg: '#f0fdf4', border: '#bbf7d0', badge: '#dcfce7', text: '#15803d', dot: '#22c55e' },
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -69,9 +71,7 @@ function makeParcelMarker(sample) {
   const isSano = cls === 'Fondo_y_Sana' || cls === 'Fondo'
   const color = !cls ? '#94a3b8'
     : isSano ? '#16a34a'
-    : conf >= 70 ? '#dc2626'
-    : conf >= 40 ? '#d97706'
-    : '#65a30d'
+    : SEVERITY_PALETTE[severityOf(cls, sample.result?.confidence)]
   const num = sample.label.replace('P', '')
   return L.divIcon({
     className: '',
@@ -105,7 +105,7 @@ function IndividualHistorial({ history, onHistoryChange }) {
   const [items, setItems]             = useState(history)
   const [search, setSearch]           = useState('')
   const [filterEstado, setFilterEstado] = useState('todos')
-  const [filterRiesgo, setFilterRiesgo] = useState('todos')
+  const [filterSeveridad, setFilterSeveridad] = useState('todos')
   const [expanded, setExpanded]       = useState(null)
   const [copied, setCopied]           = useState(null)
   const [exportingIdx, setExportingIdx] = useState(null)
@@ -116,9 +116,9 @@ function IndividualHistorial({ history, onHistoryChange }) {
     const matchSearch = search.trim() === '' ||
       (i.enfermedadLabel ?? i.enfermedad ?? '').toLowerCase().includes(search.trim().toLowerCase())
     const matchEstado = filterEstado === 'todos' || i.estado === filterEstado
-    const matchRiesgo = filterRiesgo === 'todos' || i.riesgo === filterRiesgo
-    return matchSearch && matchEstado && matchRiesgo
-  }), [items, search, filterEstado, filterRiesgo])
+    const matchSeveridad = filterSeveridad === 'todos' || i.severidad === filterSeveridad
+    return matchSearch && matchEstado && matchSeveridad
+  }), [items, search, filterEstado, filterSeveridad])
 
   const remove = async (item) => {
     if (!item?.id) return
@@ -143,7 +143,7 @@ function IndividualHistorial({ history, onHistoryChange }) {
       await exportAnalisisPDF({
         diseaseLabel:    item.enfermedadLabel ?? item.enfermedad,
         affectedPercent: (item.confianza * 100).toFixed(1),
-        risk:            item.riesgo,
+        severity:        item.severidad,
         fecha:           item.fecha,
         originalImg:     item.imagen   ?? null,
         xaiImg:          item.xaiImage ?? null,
@@ -155,7 +155,7 @@ function IndividualHistorial({ history, onHistoryChange }) {
   const copy = async (item, idx) => {
     const text = [
       `Diagnóstico: ${item.enfermedadLabel ?? item.enfermedad}`,
-      `Riesgo: ${item.riesgo}`,
+      `Severidad: ${item.severidad}`,
       `Área afectada: ${(item.confianza * 100).toFixed(1)}%`,
       `Fecha: ${new Date(item.fecha).toLocaleString('es-ES')}`,
       `Recomendaciones: ${item.recomendaciones}`,
@@ -214,11 +214,11 @@ function IndividualHistorial({ history, onHistoryChange }) {
                 : { background: isDark ? '#0e1929' : '#f8fafc', border: `1px solid ${isDark ? '#1e3048' : '#e2e8f0'}`, color: isDark ? '#94a3b8' : '#64748b' }
               }>{f.label}</button>
           ))}
-          <span className="text-xs font-semibold text-slate-400 ml-3 mr-1">Riesgo:</span>
-          {[{ id: 'todos', label: 'Todos' }, { id: 'Alto', label: 'Alto' }, { id: 'Medio', label: 'Medio' }, { id: 'Bajo', label: 'Bajo' }].map(f => (
-            <button key={f.id} onClick={() => setFilterRiesgo(f.id)}
+          <span className="text-xs font-semibold text-slate-400 ml-3 mr-1">Severidad:</span>
+          {[{ id: 'todos', label: 'Todos' }, { id: 'Grave', label: 'Grave' }, { id: 'Moderada', label: 'Moderada' }, { id: 'Leve', label: 'Leve' }].map(f => (
+            <button key={f.id} onClick={() => setFilterSeveridad(f.id)}
               className="rounded-full px-3 py-1.5 text-xs font-semibold transition-all"
-              style={filterRiesgo === f.id
+              style={filterSeveridad === f.id
                 ? { background: '#7c3aed', color: 'white' }
                 : { background: isDark ? '#0e1929' : '#f8fafc', border: `1px solid ${isDark ? '#1e3048' : '#e2e8f0'}`, color: isDark ? '#94a3b8' : '#64748b' }
               }>{f.label}</button>
@@ -252,7 +252,7 @@ function IndividualHistorial({ history, onHistoryChange }) {
       {/* Cards */}
       <div className="space-y-3">
         {filtered.map((item, idx) => {
-          const r    = RISK[item.riesgo] ?? RISK.Bajo
+          const r    = SEVERITY_STYLES[item.severidad] ?? SEVERITY_STYLES.Leve
           const open = expanded === idx
           return (
             <div key={idx} className="rounded-2xl overflow-hidden transition-shadow hover:shadow-md"
@@ -276,7 +276,7 @@ function IndividualHistorial({ history, onHistoryChange }) {
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
                     <span className="hidden sm:inline-flex rounded-full px-3 py-1 text-xs font-bold"
-                      style={{ background: r.badge, color: r.text }}>Riesgo {item.riesgo}</span>
+                      style={{ background: r.badge, color: r.text }}>{item.severidad === 'Sano' ? 'Sano' : `Severidad ${item.severidad}`}</span>
                     <span className="text-sm font-bold text-slate-600 tabular-nums">{(item.confianza * 100).toFixed(0)}%</span>
                     <IcoChevron open={open}/>
                   </div>
@@ -290,7 +290,7 @@ function IndividualHistorial({ history, onHistoryChange }) {
                     {[
                       { label: 'Cultivo',        value: item.cultivo || 'Maíz' },
                       { label: 'Área afectada',  value: `${(item.confianza * 100).toFixed(1)}%` },
-                      { label: 'Riesgo',         value: item.riesgo },
+                      { label: 'Severidad',      value: item.severidad },
                       { label: 'Estado',         value: item.estado },
                     ].map((d, i) => (
                       <div key={i} className="rounded-xl bg-white border border-slate-200 p-3">
@@ -345,8 +345,8 @@ function ParcelCard({ record, isDark, onDelete }) {
   const dominant     = stats.dominant
   const domLabel     = DISEASE_LABELS[dominant] ?? (dominant ? dominant : 'Sano')
   const domColor     = dominant ? (DISEASE_COLORS[dominant] ?? '#94a3b8') : '#22c55e'
-  const sevLabel     = stats.avgAff >= 70 ? 'Grave' : stats.avgAff >= 40 ? 'Moderada' : stats.avgAff >= 20 ? 'Leve' : 'Sano'
-  const sevColor     = { Grave: '#dc2626', Moderada: '#d97706', Leve: '#65a30d', Sano: '#16a34a' }[sevLabel]
+  const sevLabel     = lotSeverity(stats.avgAff)
+  const sevColor     = SEVERITY_PALETTE[sevLabel]
 
   const cardBg     = isDark ? '#162032' : 'white'
   const cardBorder = isDark ? '#1e3048' : '#e2e8f0'
@@ -481,7 +481,7 @@ function ParcelCard({ record, isDark, onDelete }) {
                       const cls  = s.result?.target_class
                       const conf = Math.round(s.result?.confidence ?? 0)
                       const isSano = cls === 'Fondo_y_Sana' || cls === 'Fondo'
-                      const sev  = !cls ? '—' : isSano ? 'Sano' : conf >= 70 ? 'Grave' : conf >= 40 ? 'Moderada' : 'Leve'
+                      const sev  = !cls ? '—' : severityOf(cls, s.result?.confidence)
                       const sc   = { Sano: '#16a34a', Leve: '#65a30d', Moderada: '#d97706', Grave: '#dc2626', '—': '#94a3b8' }
                       return (
                         <tr key={s.id} className={`border-t ${isDark ? 'border-slate-800 text-slate-300' : 'border-slate-100 text-slate-700'} ${i % 2 ? isDark ? 'bg-slate-800/20' : 'bg-slate-50/50' : ''}`}>
@@ -526,8 +526,8 @@ function ParcelaSummaryCard({ summary, isDark, onClick }) {
   const stats = lastVisit?.stats ?? { dominant: null, avgAff: 0, total: 0 }
   const domLabel = stats.dominant ? (DISEASE_LABELS[stats.dominant] ?? stats.dominant) : 'Sano'
   const domColor = stats.dominant ? (DISEASE_COLORS[stats.dominant] ?? '#94a3b8') : '#22c55e'
-  const sevLabel = stats.avgAff >= 70 ? 'Grave' : stats.avgAff >= 40 ? 'Moderada' : stats.avgAff >= 20 ? 'Leve' : 'Sano'
-  const sevColor = { Grave: '#dc2626', Moderada: '#d97706', Leve: '#65a30d', Sano: '#16a34a' }[sevLabel]
+  const sevLabel = lotSeverity(stats.avgAff)
+  const sevColor = SEVERITY_PALETTE[sevLabel]
 
   const prev = visits[1]
   const delta = lastVisit && prev ? parseFloat((lastVisit.stats.avgAff - prev.stats.avgAff).toFixed(1)) : null
@@ -584,7 +584,7 @@ function TrendLineChart({ visits }) {
       {n > 1 && <path d={areaD} fill="url(#trend-fill)" stroke="none" />}
       <path d={pathD} fill="none" stroke="#7c3aed" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
       {chrono.map((v, i) => {
-        const sev = v.stats.avgAff >= 70 ? '#dc2626' : v.stats.avgAff >= 40 ? '#d97706' : v.stats.avgAff >= 20 ? '#65a30d' : '#16a34a'
+        const sev = SEVERITY_PALETTE[lotSeverity(v.stats.avgAff)]
         return (
           <g key={v.id}>
             <circle cx={pointX(i)} cy={pointY(v.stats.avgAff)} r={4.5} fill={sev} stroke="white" strokeWidth="2" />

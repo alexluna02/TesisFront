@@ -4,6 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import * as turf from '@turf/turf'
 import { predictXai, createAnalisis } from './api.js'
+import { SEVERITY_LEGEND, SEVERITY_LIMITS, SEVERITY_PALETTE, affectedPercent, lotSeverity, normalizeParcelRecord, severityOf } from './severity.js'
 import { useTheme } from './ThemeContext.jsx'
 
 // ── Leaflet icon fix ──────────────────────────────────────────────────────────
@@ -351,7 +352,7 @@ function StepSamples({ data, onDone, onRedraw }) {
         formData.append('file', sample.file)
         const response = await predictXai(formData)
         const raw = response.data
-        const confidence = raw.confidence ?? raw.afectacion_pct ?? 0
+        const confidence = affectedPercent(raw.target_class, raw.confidence ?? raw.afectacion_pct)
         setSamples(s => s.map(item =>
           item.id === sample.id
             ? { ...item, status: 'done', result: { ...raw, confidence } }
@@ -590,11 +591,7 @@ function SampleCard({ sample, onFile, onHover }) {
 function makeReportPin(sample, isSelected) {
   const cls   = sample.result?.target_class
   const conf  = Math.round(sample.result?.confidence ?? 0)
-  const isSano = cls === 'Fondo_y_Sana' || cls === 'Fondo'
-  const color = isSano ? '#16a34a'
-    : conf >= 70 ? '#dc2626'
-    : conf >= 40 ? '#d97706'
-    : '#65a30d'
+  const color = SEVERITY_PALETTE[severityOf(cls, sample.result?.confidence)]
   const label = DISEASE_LABELS[cls] ?? '?'
   const num   = sample.label.replace('P', '')
   const ring  = isSelected ? `0 0 0 3px white, 0 0 0 5px ${color}` : '0 2px 8px rgba(0,0,0,0.35)'
@@ -695,9 +692,8 @@ function ZoneDetail({ sample, isDark, onClose }) {
   const cls   = sample.result?.target_class
   const conf  = Math.round(sample.result?.confidence ?? 0)
   const color = DISEASE_COLORS[cls] ?? '#64748b'
-  const sev   = (cls === 'Fondo_y_Sana' || cls === 'Fondo') ? 'Sano'
-    : conf >= 70 ? 'Grave' : conf >= 40 ? 'Moderada' : 'Leve'
-  const sevColor = { Sano: '#16a34a', Leve: '#65a30d', Moderada: '#d97706', Grave: '#dc2626' }
+  const sev   = severityOf(cls, sample.result?.confidence)
+  const sevColor = SEVERITY_PALETTE
 
   return (
     <div className={`rounded-2xl border overflow-hidden shadow-md ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
@@ -787,16 +783,13 @@ function StepReport({ data, samples, onReset }) {
     .map(s => ({
       label: s.label,
       value: Math.round(s.result.confidence),
-      color: (s.result.target_class === 'Fondo_y_Sana' || s.result.target_class === 'Fondo') ? '#22c55e'
-        : s.result.confidence >= 70 ? '#dc2626'
-        : s.result.confidence >= 40 ? '#d97706'
-        : '#65a30d',
+      color: SEVERITY_PALETTE[severityOf(s.result.target_class, s.result.confidence)],
     }))
 
   const selectedSample = selectedId != null ? samples.find(s => s.id === selectedId) : null
 
-  const severityLevel = avgAff >= 70 ? 'Grave' : avgAff >= 40 ? 'Moderada' : avgAff >= 20 ? 'Leve' : 'Sano'
-  const severityColor = { Grave: '#dc2626', Moderada: '#d97706', Leve: '#65a30d', Sano: '#16a34a' }
+  const severityLevel = lotSeverity(avgAff)
+  const severityColor = SEVERITY_PALETTE
 
   return (
     <div className="flex flex-col gap-5">
@@ -819,7 +812,7 @@ function StepReport({ data, samples, onReset }) {
       </div>
 
       {/* ── Alerts ── */}
-      {critical && critical.result.confidence > 20 && (
+      {critical && critical.result.confidence > SEVERITY_LIMITS.grave && (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-5 py-3.5 flex items-center gap-3">
           <span className="text-xl">🚨</span>
           <p className="text-sm text-red-700">
@@ -875,9 +868,9 @@ function StepReport({ data, samples, onReset }) {
           </div>
           {/* Legend */}
           <div className={`px-4 py-2 border-t flex flex-wrap gap-x-4 gap-y-1 ${isDark ? 'border-[#1e3048] bg-[#162032]' : 'border-slate-100 bg-white'}`}>
-            {[['#16a34a','Sano (0–20%)'],['#65a30d','Leve (20–40%)'],['#d97706','Moderado (40–70%)'],['#dc2626','Grave (>70%)']].map(([c, l]) => (
+            {SEVERITY_LEGEND.map(([k, l]) => (
               <div key={l} className="flex items-center gap-1.5">
-                <span className="w-2.5 h-2.5 rounded-full" style={{ background: c }} />
+                <span className="w-2.5 h-2.5 rounded-full" style={{ background: SEVERITY_PALETTE[k] }} />
                 <span className="text-[10px] text-slate-500">{l}</span>
               </div>
             ))}
@@ -963,8 +956,7 @@ function StepReport({ data, samples, onReset }) {
               {samples.map((s, i) => {
                 const cls  = s.result?.target_class
                 const conf = s.result?.confidence ?? 0
-                const isSano = cls === 'Fondo_y_Sana' || cls === 'Fondo'
-                const sev  = !cls ? '—' : isSano ? 'Sano' : conf >= 70 ? 'Grave' : conf >= 40 ? 'Moderada' : 'Leve'
+                const sev  = !cls ? '—' : severityOf(cls, conf)
                 const sevC = { Sano: '#16a34a', Leve: '#65a30d', Moderada: '#d97706', Grave: '#dc2626', '—': '#94a3b8' }
                 const [lng, lat] = s.coords
                 const isSel = selectedId === s.id
@@ -1015,7 +1007,7 @@ export const PARCELAS_KEY = 'agro_parcelas'
 export const PARCEL_HISTORY_KEY = 'agro_parcel_history'
 
 export function loadParcelHistory() {
-  try { return JSON.parse(localStorage.getItem(PARCEL_HISTORY_KEY) ?? '[]') } catch { return [] }
+  try { return JSON.parse(localStorage.getItem(PARCEL_HISTORY_KEY) ?? '[]').map(normalizeParcelRecord) } catch { return [] }
 }
 
 function saveParcelHistoryRecords(records) {

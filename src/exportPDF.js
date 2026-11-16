@@ -26,7 +26,7 @@ function addWrappedText(doc, text, x, y, maxWidth, lineHeight = 5) {
   return y + lines.length * lineHeight
 }
 
-export async function exportAnalisisPDF({ diseaseLabel, affectedPercent, risk, fecha, originalImg, xaiImg, recommendations }) {
+export async function exportAnalisisPDF({ diseaseLabel, affectedPercent, severity, fecha, originalImg, xaiImg, recommendations }) {
   const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const W = 210
   const margin = 14
@@ -89,15 +89,15 @@ export async function exportAnalisisPDF({ diseaseLabel, affectedPercent, risk, f
   doc.setTextColor(...GRAY)
   doc.text('Área afect.', cx, cy + 7, { align: 'center' })
 
-  // Risk badge
-  const riskColors = { Alto: [185, 28, 28], Medio: [180, 83, 9], Bajo: [21, 128, 61] }
-  const rColor = riskColors[risk] ?? riskColors.Bajo
+  // Severity badge
+  const severityColors = { Grave: [185, 28, 28], Moderada: [180, 83, 9], Leve: [21, 128, 61], Sano: [21, 128, 61] }
+  const rColor = severityColors[severity] ?? severityColors.Leve
   doc.setFillColor(...rColor)
   doc.roundedRect(W - margin - 60, y + 19, 28, 6, 2, 2, 'F')
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(7)
   doc.setTextColor(...WHITE)
-  doc.text(`Riesgo ${risk ?? '—'}`, W - margin - 60 + 14, y + 23.5, { align: 'center' })
+  doc.text(severity === 'Sano' ? 'Sano' : `Severidad ${severity ?? '—'}`, W - margin - 60 + 14, y + 23.5, { align: 'center' })
 
   y += 34
 
