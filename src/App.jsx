@@ -10,7 +10,7 @@ import ModeloIA from './ModeloIA.jsx'
 import { affectedFromRecord, lotSeverity, severityFromRecord } from './severity.js'
 import Login from './Login.jsx'
 import foto3 from './Imagenes/foto3.webp'
-import { api, fetchMe, fetchAnalisis, logoutRequest, isLogged, clearAuthData } from './api.js'
+import { api, fetchMe, fetchAnalisis, logoutRequest, isLogged, clearAuthData, getRefreshToken, SESSION_EXPIRED_EVENT } from './api.js'
 import { fetchEnfermedades } from './api.js'
 import { loadParcelHistory, PARCEL_HISTORY_KEY, getParcelaSummaries, PARCELAS_KEY } from './AnalizarParcela.jsx'
 
@@ -1540,6 +1540,7 @@ export default function App() {
   const [apiStatus, setApiStatus] = useState('checking')
   const [analysisHistory, setAnalysisHistory] = useState([])
   const [authenticated, setAuthenticated] = useState(() => isLogged())
+  const [authNotice, setAuthNotice] = useState('')
   const [enfermedades, setEnfermedades] = useState([])
   const [userName, setUserName]   = useState('Usuario')
   const [userEmail, setUserEmail] = useState('')
@@ -1608,24 +1609,39 @@ export default function App() {
   }, [authenticated])
 
   const handleLogin = () => {
+    setAuthNotice('')
     setAuthenticated(true)
     setPage('inicio')
   }
 
-  const handleLogout = async () => {
-    try {
-      const refreshToken = localStorage.getItem('agro_refresh_token')
-      if (refreshToken) await logoutRequest(refreshToken)
-    } catch {
-      // ignore logout error
-    }
+  const resetSession = () => {
     clearAuthData()
     setAuthenticated(false)
     setAnalysisHistory([])
-    setUserName('Investigador')
+    setUserName('Usuario')
     setUserEmail('')
     setUserRol('agricultor')
     setPage('inicio')
+  }
+
+  // api.js emite este evento cuando el servidor rechaza la renovación de la sesión
+  useEffect(() => {
+    const onSessionExpired = () => {
+      resetSession()
+      setAuthNotice('Tu sesión expiró. Vuelve a iniciar sesión para continuar.')
+    }
+    window.addEventListener(SESSION_EXPIRED_EVENT, onSessionExpired)
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onSessionExpired)
+  }, [])
+
+  const handleLogout = async () => {
+    try {
+      const refreshToken = getRefreshToken()
+      if (refreshToken) await logoutRequest(refreshToken)
+    } catch {
+      // El cierre local continúa aunque falle la red
+    }
+    resetSession()
   }
 
   const syncHistory = (nextHistory) => {
@@ -1644,7 +1660,7 @@ export default function App() {
     return (
       <>
         <FontLink />
-        <Login onLogin={handleLogin} />
+        <Login onLogin={handleLogin} notice={authNotice} />
       </>
     )
   }

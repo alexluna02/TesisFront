@@ -21,6 +21,9 @@ export const clearAuthData = () => {
   localStorage.removeItem(LOGGED_KEY)
 }
 
+// App.jsx escucha este evento para volver al login sin recargar la página
+export const SESSION_EXPIRED_EVENT = 'agro:session-expired'
+
 export const api = axios.create({
   baseURL: API_URL,
 })
@@ -30,35 +33,90 @@ api.interceptors.request.use((config) => {
   if (token) {
     config.headers = config.headers ?? {}
     config.headers.Authorization = `Bearer ${token}`
+    config._accessToken = token
   }
   return config
 })
 
+// Una sola renovación a la vez: el backend rota el refresh token en cada uso, así que si
+// dos peticiones lo renovaran en paralelo la segunda usaría un token ya revocado.
+let refreshInFlight = null
+const refreshAccessToken = () => {
+  if (!refreshInFlight) {
+    refreshInFlight = axios
+      .post(`${API_URL}/auth/refresh`, { refresh_token: getRefreshToken() })
+      .then(({ data }) => {
+        saveAuthData(data)
+        return data.access_token
+      })
+      .finally(() => { refreshInFlight = null })
+  }
+  return refreshInFlight
+}
+
+const endSession = () => {
+  clearAuthData()
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT))
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config
-    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
-      originalRequest._retry = true
-      const refreshToken = getRefreshToken()
-      if (refreshToken) {
-        try {
-          const refreshResponse = await axios.post(`${API_URL}/auth/refresh`, {
-            refresh_token: refreshToken,
-          })
-          saveAuthData(refreshResponse.data)
-          originalRequest.headers = originalRequest.headers ?? {}
-          originalRequest.headers.Authorization = `Bearer ${refreshResponse.data.access_token}`
-          return api(originalRequest)
-        } catch (refreshError) {
-          clearAuthData()
-          window.location.reload()
-        }
-      }
+    const original = error.config
+    const isAuthEndpoint = original?.url?.startsWith('/auth/')
+    if (error.response?.status !== 401 || !original || original._retry || isAuthEndpoint) {
+      return Promise.reject(error)
     }
-    return Promise.reject(error)
+    original._retry = true
+
+    // Otra petición u otra pestaña ya renovó el token mientras esta viajaba
+    const current = getAccessToken()
+    if (current && original._accessToken && current !== original._accessToken) {
+      return api(original)
+    }
+
+    if (!getRefreshToken()) {
+      endSession()
+      return Promise.reject(error)
+    }
+
+    try {
+      await refreshAccessToken()
+      return api(original)
+    } catch (refreshError) {
+      // Solo se cierra la sesión si el servidor rechaza el refresh token. Un corte de red
+      // (frecuente en el campo) no debe sacar al usuario ni hacerle perder su trabajo.
+      const status = refreshError?.response?.status
+      if (status === 401 || status === 403) endSession()
+      return Promise.reject(error)
+    }
   }
 )
+
+// FastAPI devuelve `detail` como texto o, en errores de validación (422), como una lista
+// de objetos que React no puede mostrar directamente.
+const FIELD_LABELS = {
+  email: 'el correo',
+  password: 'la contraseña',
+  new_password: 'la contraseña',
+  current_password: 'la contraseña actual',
+  nombre: 'el nombre',
+  code: 'el código',
+}
+export const apiErrorMessage = (err, fallback = 'Ocurrió un error. Intenta de nuevo.') => {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (Array.isArray(detail) && detail.length) {
+    const first = detail[0] ?? {}
+    const field = FIELD_LABELS[first.loc?.[first.loc.length - 1]]
+    if (field && first.type === 'string_too_short' && first.ctx?.min_length) {
+      return `${field.charAt(0).toUpperCase()}${field.slice(1)} debe tener al menos ${first.ctx.min_length} caracteres.`
+    }
+    return field ? `Revisa ${field}: el valor no es válido.` : 'Revisa los datos ingresados.'
+  }
+  if (err?.request && !err?.response) return 'No se pudo conectar con el servidor. Revisa tu conexión.'
+  return fallback
+}
 export const loginRequest = (email, password) => api.post('/auth/login', { email, password })
 export const registerRequest = (nombre, email, password) => api.post('/auth/register', { nombre, email, password })
 export const logoutRequest = (refresh_token) => api.post('/auth/logout', { refresh_token })
@@ -74,6 +132,7 @@ export const googleLoginRequest  = (access_token) => api.post('/auth/google', { 
 export const updateProfile          = (data)  => api.put('/users/me', data)
 export const changePassword         = (data)  => api.put('/users/me/password', data)
 export const forgotPasswordRequest  = (email) => api.post('/auth/forgot-password', { email })
+export const verifyResetCodeRequest = (data)  => api.post('/auth/verify-reset-code', data)
 export const resetPasswordRequest   = (data)  => api.post('/auth/reset-password', data)
 export const fetchMercadoResumen    = () => api.get('/mercado/resumen')
 export const fetchMercadoHistorico  = (producto, dias = 30) => api.get('/mercado/historico', { params: { producto, dias } })

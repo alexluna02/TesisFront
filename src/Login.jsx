@@ -1,7 +1,13 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useGoogleLogin } from '@react-oauth/google'
 import foto3 from './Imagenes/foto3.webp'
-import { loginRequest, registerRequest, saveAuthData, googleLoginRequest, forgotPasswordRequest, resetPasswordRequest } from './api.js'
+import {
+  loginRequest, registerRequest, saveAuthData, googleLoginRequest, apiErrorMessage,
+  forgotPasswordRequest, verifyResetCodeRequest, resetPasswordRequest,
+} from './api.js'
+
+const MIN_PASSWORD_LENGTH = 8
+const RESEND_COOLDOWN_SECONDS = 60 // igual que RESET_CODE_RESEND_SECONDS en el backend
 
 function GoogleIcon() {
   return (
@@ -14,7 +20,7 @@ function GoogleIcon() {
   )
 }
 
-export default function Login({ onLogin }) {
+export default function Login({ onLogin, notice = '' }) {
   const [mode, setMode] = useState('login')
   const [nombre, setNombre] = useState('')
   const [email, setEmail] = useState('')
@@ -26,8 +32,8 @@ export default function Login({ onLogin }) {
   // ── Forgot password state ────────────────────────────────────
   const [resetStep,       setResetStep]       = useState(null) // null | 'email' | 'code' | 'newpwd'
   const [resetEmail,      setResetEmail]      = useState('')
-  const [resetToken,      setResetToken]      = useState('')
   const [resetCode,       setResetCode]       = useState(['', '', '', '', '', ''])
+  const [resendIn,        setResendIn]        = useState(0)
   const [resetNewPwd,     setResetNewPwd]     = useState('')
   const [resetConfirmPwd, setResetConfirmPwd] = useState('')
   const [resetLoading,    setResetLoading]    = useState(false)
@@ -35,6 +41,13 @@ export default function Login({ onLogin }) {
   const [resetSuccess,    setResetSuccess]    = useState('')
   const [showResetPwd,    setShowResetPwd]    = useState(false)
   const codeRefs = [useRef(), useRef(), useRef(), useRef(), useRef(), useRef()]
+
+  // Cuenta regresiva para "Reenviar código" (el backend ignora reenvíos más seguidos)
+  useEffect(() => {
+    if (resendIn <= 0) return
+    const t = setTimeout(() => setResendIn((s) => s - 1), 1000)
+    return () => clearTimeout(t)
+  }, [resendIn])
 
   const handleCodeDigit = (i, val) => {
     if (!/^\d?$/.test(val)) return
@@ -77,17 +90,20 @@ export default function Login({ onLogin }) {
   }
 
   const handleSendCode = async (e) => {
-    e.preventDefault()
-    if (!resetEmail.trim()) { setResetError('Ingresa tu correo electrónico.'); return }
+    e?.preventDefault()
+    const target = resetEmail.trim()
+    if (!target) { setResetError('Ingresa tu correo electrónico.'); return }
     setResetLoading(true)
     setResetError('')
     try {
-      const res = await forgotPasswordRequest(resetEmail.trim())
-      setResetToken(res.data.reset_token ?? '')
+      // El backend responde igual exista o no la cuenta: el código solo llega por correo
+      await forgotPasswordRequest(target)
+      setResetCode(['', '', '', '', '', ''])
       setResetStep('code')
+      setResendIn(RESEND_COOLDOWN_SECONDS)
       setTimeout(() => codeRefs[0].current?.focus(), 100)
     } catch (err) {
-      setResetError(err?.response?.data?.detail || 'No se pudo enviar el código.')
+      setResetError(apiErrorMessage(err, 'No se pudo enviar el código.'))
     } finally {
       setResetLoading(false)
     }
@@ -100,19 +116,11 @@ export default function Login({ onLogin }) {
     setResetLoading(true)
     setResetError('')
     try {
-      await resetPasswordRequest({ reset_token: resetToken, code, new_password: 'placeholder_verify' })
-      // Si llega aquí sin error de contraseña, el código es válido
+      // Solo valida el código; la contraseña no se toca hasta el paso 3
+      await verifyResetCodeRequest({ email: resetEmail.trim(), code })
       setResetStep('newpwd')
-      setResetError('')
     } catch (err) {
-      const msg = err?.response?.data?.detail ?? ''
-      if (msg.toLowerCase().includes('contras')) {
-        // Código correcto, solo falla la contraseña → avanzar al paso de nueva contraseña
-        setResetStep('newpwd')
-        setResetError('')
-      } else {
-        setResetError(msg || 'Código incorrecto o expirado.')
-      }
+      setResetError(apiErrorMessage(err, 'Código incorrecto o expirado.'))
     } finally {
       setResetLoading(false)
     }
@@ -120,17 +128,18 @@ export default function Login({ onLogin }) {
 
   const handleResetPassword = async (e) => {
     e.preventDefault()
-    if (resetNewPwd.length < 8)           { setResetError('La contraseña debe tener al menos 8 caracteres.'); return }
-    if (resetNewPwd !== resetConfirmPwd)   { setResetError('Las contraseñas no coinciden.'); return }
+    if (resetNewPwd.length < MIN_PASSWORD_LENGTH) { setResetError(`La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`); return }
+    if (resetNewPwd !== resetConfirmPwd)          { setResetError('Las contraseñas no coinciden.'); return }
     setResetLoading(true)
     setResetError('')
     try {
-      const code = resetCode.join('')
-      await resetPasswordRequest({ reset_token: resetToken, code, new_password: resetNewPwd })
+      await resetPasswordRequest({ email: resetEmail.trim(), code: resetCode.join(''), new_password: resetNewPwd })
       setResetSuccess('¡Contraseña actualizada! Ya puedes iniciar sesión.')
+      setEmail(resetEmail.trim())
+      setPassword('')
       setTimeout(() => closeReset(), 2500)
     } catch (err) {
-      setResetError(err?.response?.data?.detail || 'No se pudo actualizar la contraseña.')
+      setResetError(apiErrorMessage(err, 'No se pudo actualizar la contraseña.'))
     } finally {
       setResetLoading(false)
     }
@@ -145,8 +154,7 @@ export default function Login({ onLogin }) {
         saveAuthData(response.data)
         onLogin()
       } catch (err) {
-        const message = err?.response?.data?.detail || err?.message || 'Error al iniciar sesión con Google.'
-        setError(message)
+        setError(apiErrorMessage(err, 'Error al iniciar sesión con Google.'))
       } finally {
         setLoading(false)
       }
@@ -164,6 +172,10 @@ export default function Login({ onLogin }) {
       setError('Por favor ingresa tu nombre.')
       return
     }
+    if (mode === 'register' && password.length < MIN_PASSWORD_LENGTH) {
+      setError(`La contraseña debe tener al menos ${MIN_PASSWORD_LENGTH} caracteres.`)
+      return
+    }
 
     setError('')
     setLoading(true)
@@ -177,8 +189,7 @@ export default function Login({ onLogin }) {
       saveAuthData(response.data)
       onLogin()
     } catch (err) {
-      const message = err?.response?.data?.detail || err?.message || 'Ocurrió un error. Intenta de nuevo.'
-      setError(message)
+      setError(apiErrorMessage(err))
     } finally {
       setLoading(false)
     }
@@ -239,6 +250,12 @@ export default function Login({ onLogin }) {
                 {mode === 'register' ? 'Regístrate para comenzar a usar AgroScan' : 'Inicia sesión para continuar'}
               </p>
             </div>
+
+            {notice && mode === 'login' && (
+              <p className="-mt-6 mb-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {notice}
+              </p>
+            )}
 
             <form className="space-y-5" onSubmit={handleSubmit}>
               {mode === 'register' && (
@@ -433,7 +450,7 @@ export default function Login({ onLogin }) {
                 {resetStep === 'code' && (
                   <form onSubmit={handleVerifyCode} className="space-y-5">
                     <p className="text-sm text-slate-500">
-                      Enviamos un código de 6 dígitos a <span className="font-semibold text-slate-700">{resetEmail}</span>. Puede tardar unos segundos.
+                      Si <span className="font-semibold text-slate-700">{resetEmail}</span> tiene una cuenta, te enviamos un código de 6 dígitos válido por 15 minutos. Revisa también la carpeta de spam.
                     </p>
                     <div className="flex justify-center gap-2" onPaste={handleCodePaste}>
                       {resetCode.map((digit, i) => (
@@ -453,7 +470,13 @@ export default function Login({ onLogin }) {
                     </div>
                     <p className="text-center text-xs text-slate-400">
                       ¿No llegó?{' '}
-                      <button type="button" onClick={handleSendCode} className="font-semibold text-violet-600 hover:text-violet-700">Reenviar código</button>
+                      {resendIn > 0 ? (
+                        <span>Puedes reenviarlo en {resendIn} s</span>
+                      ) : (
+                        <button type="button" onClick={handleSendCode} disabled={resetLoading} className="font-semibold text-violet-600 hover:text-violet-700 disabled:opacity-60">Reenviar código</button>
+                      )}
+                      {' · '}
+                      <button type="button" onClick={() => { setResetStep('email'); setResetError('') }} className="font-semibold text-violet-600 hover:text-violet-700">Cambiar correo</button>
                     </p>
                     {resetError && <p className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-4 py-2 text-center">{resetError}</p>}
                     <button type="submit" disabled={resetLoading || resetCode.join('').length < 6}
