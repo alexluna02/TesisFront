@@ -5,6 +5,8 @@ import { useTheme } from './ThemeContext.jsx'
 import { affectedFromRecord, affectedPercent, severityFromRecord, severityKey, severityOf } from './severity.js'
 import { AnalysisTimingPanel, prepareUploadFile, timedRequest, timingFrom, useModelLoadTime } from './Rendimiento.jsx'
 import AnalizarParcela from './AnalizarParcela.jsx'
+import { recommendationsFor } from './diseases.js'
+import PageHero, { PageGlow } from './PageHero.jsx'
 
 const DISEASES = {
   Fondo_y_Sana:  { label: 'Cultivo Sano',   color: '#15803d', gradFrom: '#f0fdf4', gradTo: '#dcfce7', border: '#86efac', barColor: '#22c55e' },
@@ -16,32 +18,6 @@ const DISEASES = {
 }
 
 const DISEASE_IDS = { Fondo: 1, Fondo_y_Sana: 1, Tizon: 2, Roya: 3, Mancha_blanca: 4, Mancha_Blanca: 4 }
-
-const RECOMMENDATIONS = {
-  Fondo_y_Sana: [
-    { title: 'Monitoreo periódico', body: 'Continuar con revisión del cultivo cada 7-10 días para detectar cambios tempranos.' },
-    { title: 'Mantener prácticas', body: 'Sostener las prácticas óptimas de riego y fertilización actuales.' },
-    { title: 'Registrar condiciones', body: 'Documentar condiciones actuales como referencia para análisis futuros.' },
-  ],
-  Tizon: [
-    { title: 'Fungicidas preventivos', body: 'Aplicar fungicidas certificados para tizón del maíz de forma preventiva.' },
-    { title: 'Mejorar drenaje', body: 'Optimizar el drenaje del suelo para reducir la humedad excesiva.' },
-    { title: 'Rotación de cultivos', body: 'Planificar rotación de cultivos para la próxima temporada.' },
-    { title: 'Vigilar parcelas', body: 'Monitorear parcelas adyacentes para detectar posible propagación.' },
-  ],
-  Roya: [
-    { title: 'Fungicidas triazoles', body: 'Aplicar fungicidas triazoles en etapas tempranas de infección.' },
-    { title: 'Ventilación', body: 'Reducir humedad relativa mejorando la ventilación entre surcos.' },
-    { title: 'Mayor frecuencia', body: 'Incrementar frecuencia de monitoreo a cada 3-5 días.' },
-    { title: 'Variedades resistentes', body: 'Considerar variedades resistentes a roya en próximas siembras.' },
-  ],
-  Mancha_Blanca: [
-    { title: 'Fungicidas sistémicos', body: 'Aplicar tratamientos fungicidas sistémicos según recomendación técnica.' },
-    { title: 'Sanidad del suelo', body: 'Mejorar la sanidad del suelo con enmiendas orgánicas adecuadas.' },
-    { title: 'Riego uniforme', body: 'Evitar el estrés hídrico manteniendo riego constante y uniforme.' },
-    { title: 'Eliminar residuos', body: 'Retirar residuos de cosecha que puedan actuar como focos de infección.' },
-  ],
-}
 
 const STEPS = [
   'Preprocesando imagen UAV…',
@@ -160,7 +136,7 @@ const compressImage = (file, maxWidth = 800, quality = 0.75) => new Promise((res
   img.src = tempUrl
 })
 
-const mapAnalysisResponse = (record, RECS) => {
+const mapAnalysisResponse = (record) => {
   const confidence = affectedFromRecord(record)
   const diseaseName = record.enfermedad?.nombre ?? 'Desconocido'
   return {
@@ -172,7 +148,7 @@ const mapAnalysisResponse = (record, RECS) => {
     confianza: confidence / 100,
     severidad: severityFromRecord(record),
     cultivo: 'Maíz',
-    recomendaciones: RECS[record.enfermedad?.nombre]?.map(r => r.body).join(' ') ?? '',
+    recomendaciones: recommendationsFor(record.enfermedad?.nombre).map(r => r.body).join(' '),
     xaiImage: record.grad_cam_url,
     affectedPercent: confidence,
     estado: record.enfermedad?.clase_idx === 0 ? 'Sano' : 'Con enfermedad',
@@ -345,9 +321,79 @@ function AnnotatedResultImage({ originalSrc, maskBase64, targetClassId, label, c
   return <canvas ref={canvasRef} className="w-full h-full object-contain" />
 }
 
-export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [], enfermedades = [], initialMode = 'individual', preselectedParcelaId = null, showPerformance = false }) {
+// ── Zona de carga: ilustración, hojas decorativas y ventajas ─────────────────
+function UploadIllustration() {
+  return (
+    <svg viewBox="0 0 220 130" className="h-32 w-56 transition-transform duration-300 group-hover:-translate-y-1 sm:h-36 sm:w-64" aria-hidden="true">
+      <defs>
+        <linearGradient id="agro-up-sky" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#60a5fa" />
+          <stop offset="1" stopColor="#bfdbfe" />
+        </linearGradient>
+        <linearGradient id="agro-up-hill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#22c55e" />
+          <stop offset="1" stopColor="#15803d" />
+        </linearGradient>
+        <linearGradient id="agro-up-btn" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#34d399" />
+          <stop offset="1" stopColor="#059669" />
+        </linearGradient>
+        <clipPath id="agro-up-card">
+          <rect x="66" y="22" width="80" height="62" rx="10" />
+        </clipPath>
+      </defs>
+      <ellipse cx="110" cy="74" rx="104" ry="34" fill="none" stroke="#10b981" strokeOpacity="0.25" />
+      <ellipse cx="110" cy="74" rx="78" ry="25" fill="none" stroke="#10b981" strokeOpacity="0.35" strokeDasharray="3 4" />
+      <circle cx="8" cy="70" r="2.5" fill="#10b981" fillOpacity="0.5" />
+      <circle cx="212" cy="80" r="2.5" fill="#10b981" fillOpacity="0.5" />
+      <g transform="rotate(9 122 56)">
+        <rect x="84" y="14" width="76" height="58" rx="10" fill="#dbeafe" stroke="#ffffff" strokeWidth="3" />
+      </g>
+      <g transform="rotate(-6 106 53)">
+        <g clipPath="url(#agro-up-card)">
+          <rect x="66" y="22" width="80" height="62" fill="url(#agro-up-sky)" />
+          <circle cx="128" cy="38" r="6" fill="#facc15" />
+          <path d="M60 86 L88 54 L106 72 L118 60 L150 90 Z" fill="url(#agro-up-hill)" />
+        </g>
+        <rect x="66" y="22" width="80" height="62" rx="10" fill="none" stroke="#ffffff" strokeWidth="3" />
+      </g>
+      <circle cx="148" cy="90" r="17" fill="url(#agro-up-btn)" stroke="#ffffff" strokeWidth="3" />
+      <path d="M148 98V83M141.5 89.5 148 83l6.5 6.5" stroke="#ffffff" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+const DecorLeaf = ({ className, flip = false }) => (
+  <svg viewBox="0 0 120 120" aria-hidden="true" className={className} style={flip ? { transform: 'scaleX(-1)' } : undefined}>
+    <path d="M10 110C10 50 50 10 110 10c0 60-40 100-100 100Z" fill="currentColor" />
+    <path d="M10 110C40 80 70 50 110 10" fill="none" strokeWidth="2" className="stroke-white/60 dark:stroke-emerald-300/15" />
+  </svg>
+)
+
+const IcoImage = ({ className = 'h-6 w-6' }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
+    <rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" />
+  </svg>
+)
+
+const UPLOAD_FEATURES = [
+  {
+    text: 'Análisis seguro con IA',
+    icon: <path d="M12 2.5 4.5 5.5v5.7c0 4.9 3.2 9 7.5 10.3 4.3-1.3 7.5-5.4 7.5-10.3V5.5L12 2.5Zm-1.2 13.2-3.3-3.3 1.4-1.4 1.9 1.9 4.6-4.6 1.4 1.4-6 6Z" fill="currentColor" />,
+  },
+  {
+    text: 'Resultados en segundos',
+    icon: <path d="M13.5 2 4.5 13.5h6L9.5 22l9-11.5h-6L13.5 2Z" fill="currentColor" />,
+  },
+  {
+    text: 'Soporte para imágenes de alta resolución',
+    icon: <path d="M20.5 3.5C11 3.5 4.5 8.5 4.5 16c0 1.6.4 3 1 4.2C7.5 14.5 11 11 16 9c-4.2 2.6-7.2 6.3-8.6 11.2 1 .5 2.2.8 3.6.8 7 0 9.5-6.5 9.5-17.5Z" fill="currentColor" />,
+  },
+]
+
+// El modo ('individual' | 'parcela') lo elige el submenú "Analizar" de la barra lateral (App.jsx)
+export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [], enfermedades = [], mode = 'individual', preselectedParcelaId = null, showPerformance = false }) {
   const { isDark } = useTheme()
-  const [mode, setMode] = useState(initialMode) // 'individual' | 'parcela'
   const [file, setFile]               = useState(null)
   const [preview, setPreview]         = useState('')
   const [previewDataUrl, setPreviewDataUrl] = useState('')
@@ -365,7 +411,7 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
   const displayConf = useCountUp(result?.confidence ?? 0, !!result && !loading)
   const isHealthy   = result?.target_class === 'Fondo_y_Sana' || result?.target_class === 'Fondo'
   const disease     = result ? DISEASES[result.target_class] : null
-  const recs        = result ? (RECOMMENDATIONS[result.target_class] ?? RECOMMENDATIONS['Fondo_y_Sana']) : []
+  const recs        = result ? recommendationsFor(result.target_class) : []
   const severity    = result ? severityOf(result.target_class, result.confidence) : null
   const chemData    = result ? (CHEMICAL_TREATMENTS[result.target_class] ?? null) : null
 
@@ -482,7 +528,7 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
         enfermedad_id:  diseaseId,
       })
 
-      const saved = mapAnalysisResponse(savedResponse.data, RECOMMENDATIONS)
+      const saved = mapAnalysisResponse(savedResponse.data)
       if (typeof onHistoryChange === 'function') onHistoryChange([saved, ...history])
       if (typeof onAnalysisSaved === 'function') onAnalysisSaved()
     } catch (e) {
@@ -500,163 +546,156 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
     : ''
 
   return (
-    <div className="space-y-5 fade-up">
+    <div className="fade-up relative isolate space-y-5">
+      <PageGlow />
+      {mode === 'parcela'
+        ? <PageHero title="Analiza" highlight="tu parcela" subtitle="Muestreo sistemático de un lote completo con IA" />
+        : <PageHero title="Analiza" highlight="tus cultivos" subtitle="Detecta enfermedades con el poder de la IA" />}
 
-      {/* ── Mode selector ──────────────────────────────────────────── */}
-      <div className={`rounded-2xl border shadow-sm p-1.5 flex gap-1.5 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-        {[
-          { id: 'individual', label: 'Diagnóstico Individual', icon: '🔬', desc: 'Analiza una imagen UAV a la vez' },
-          { id: 'parcela',    label: 'Analizar Parcela Completa', icon: '🛰️', desc: 'Muestreo sistemático de un lote entero' },
-        ].map(({ id, label, icon, desc }) => (
-          <button
-            key={id}
-            onClick={() => setMode(id)}
-            className={`flex-1 flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all ${
-              mode === id
-                ? 'text-white shadow-md'
-                : isDark ? 'text-slate-400 hover:bg-slate-800/50' : 'text-slate-500 hover:bg-slate-50'
-            }`}
-            style={mode === id ? { background: 'linear-gradient(135deg,#7c3aed,#6d28d9)' } : {}}
-          >
-            <span className="text-xl leading-none">{icon}</span>
-            <div>
-              <p className={`text-sm font-bold leading-tight ${mode === id ? 'text-white' : ''}`}>{label}</p>
-              <p className={`text-[11px] mt-0.5 ${mode === id ? 'text-violet-200' : 'text-slate-400'}`}>{desc}</p>
-            </div>
-          </button>
-        ))}
-      </div>
-
-      {/* ── Parcela mode ─────────────────────────────────────────── */}
+      {/* ── Parcela completa ─────────────────────────────────────── */}
       {mode === 'parcela' && <AnalizarParcela preselectedParcelaId={preselectedParcelaId} />}
 
-      {/* ── Individual mode ──────────────────────────────────────── */}
-      {mode === 'individual' && <>
+      {/* ── Análisis individual ──────────────────────────────────── */}
+      {mode !== 'parcela' && <>
 
-      {/* ── Upload card ───────────────────────────────────────────── */}
-      <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-        <div className={`px-6 pt-6 pb-4 border-b flex items-center justify-between ${isDark ? 'border-[#1e3048]' : 'border-slate-100'}`}>
-          <div>
-            <h2 className={`font-bold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Cargar imagen UAV</h2>
-            <p className="text-sm text-slate-500 mt-0.5">Fotografía aérea de cultivo de maíz · JPG, PNG, WebP</p>
+      {/* ── Tarjeta de carga ──────────────────────────────────────── */}
+      <section className="overflow-hidden rounded-3xl border border-white/70 bg-white/80 shadow-[0_12px_40px_-20px_rgba(15,23,42,0.25)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.04]">
+        <div className="flex items-center gap-4 px-5 pt-5 sm:px-6 sm:pt-6">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600 shadow-sm dark:border-emerald-400/25 dark:bg-emerald-400/10 dark:text-emerald-300">
+            <IcoImage />
           </div>
-          {file && !loading && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-xs font-semibold text-emerald-700">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"/>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Cargar imagen UAV</h2>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Fotografía aérea de cultivo de maíz · JPG, PNG, WebP</p>
+          </div>
+          {file && !loading ? (
+            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-400/25 dark:bg-emerald-400/10 dark:text-emerald-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
               Lista para analizar
             </span>
+          ) : (
+            <span
+              aria-hidden="true"
+              className="hidden h-3 w-16 shrink-0 rounded-sm opacity-80 sm:block"
+              style={{ background: 'repeating-linear-gradient(-45deg, #22c55e 0 6px, transparent 6px 11px)' }}
+            />
           )}
         </div>
 
-        <div className="p-4">
+        <div className="p-4 sm:p-5">
           <div
             onDrop={handleDrop}
             onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
             onDragLeave={() => setDragging(false)}
-            className="relative rounded-xl cursor-pointer select-none overflow-hidden transition-all duration-200"
-            style={{
-              minHeight: preview ? 280 : 220,
-              border: dragging ? '2px dashed #22c55e' : '2px dashed #e2e8f0',
-              background: dragging ? '#f0fdf4' : preview ? '#0f172a' : isDark ? 'linear-gradient(135deg, #0e1929 0%, #0c1220 100%)' : 'linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%)',
-              boxShadow: dragging ? '0 0 0 4px rgba(34,197,94,0.12)' : 'none',
-            }}
+            className={`group relative cursor-pointer select-none overflow-hidden rounded-2xl border-2 border-dashed transition-all duration-200 ${
+              dragging
+                ? 'border-emerald-500 bg-emerald-50 shadow-[0_0_0_4px_rgba(16,185,129,0.15)] dark:bg-emerald-400/10'
+                : preview
+                  ? 'border-transparent bg-slate-950'
+                  : 'border-emerald-300/80 bg-linear-to-br from-emerald-50/80 via-white/60 to-green-50/80 hover:border-emerald-400 dark:border-emerald-400/30 dark:from-emerald-400/[0.07] dark:via-transparent dark:to-emerald-400/[0.04]'
+            }`}
+            style={{ minHeight: preview ? 300 : 280 }}
           >
             <input
               type="file"
               accept="image/*"
+              aria-label="Seleccionar imagen del cultivo"
               onChange={(e) => applyFile(e.target.files?.[0])}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+              className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
             />
 
             {preview ? (
               <>
                 <img
                   src={preview}
-                  alt="Preview"
-                  className="w-full object-cover transition-all duration-300"
-                  style={{ maxHeight: 340, opacity: loading ? 0.4 : 1 }}
+                  alt="Vista previa de la imagen"
+                  className="mx-auto max-h-[380px] w-full object-contain transition-opacity duration-300"
+                  style={{ opacity: loading ? 0.4 : 1 }}
                 />
-                <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-slate-950/80 to-transparent px-4 py-3 flex items-center justify-between z-20 pointer-events-none">
-                  <div className="flex items-center gap-2">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" className="w-4 h-4 flex-shrink-0">
-                      <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
-                    </svg>
-                    <p className="text-xs text-slate-300 font-medium truncate max-w-[200px]">{file?.name}</p>
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-center justify-between bg-linear-to-t from-slate-950/80 to-transparent px-4 py-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <IcoImage className="h-4 w-4 shrink-0 text-slate-400" />
+                    <p className="max-w-[200px] truncate text-xs font-medium text-slate-300">{file?.name}</p>
                     <span className="text-xs text-slate-500">{fileSizeLabel}</span>
                   </div>
                   <button
                     type="button"
                     onClick={clearFile}
-                    className="pointer-events-auto z-30 flex items-center gap-1 rounded-lg bg-white/10 hover:bg-white/20 border border-white/20 px-2.5 py-1 text-xs font-semibold text-white transition backdrop-blur-sm"
+                    className="pointer-events-auto z-30 flex items-center gap-1 rounded-lg border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur-sm transition hover:bg-white/20"
                   >
                     Cambiar
                   </button>
                 </div>
               </>
             ) : (
-              <div className="flex flex-col items-center justify-center gap-4 py-14">
-                <div
-                  className="w-16 h-16 rounded-2xl flex items-center justify-center transition-all duration-200"
-                  style={{
-                    background: dragging ? '#dcfce7' : 'white',
-                    border: dragging ? '1.5px solid #86efac' : '1.5px solid #e2e8f0',
-                    boxShadow: '0 4px 12px rgba(15,23,42,0.07)',
-                  }}
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke={dragging ? '#16a34a' : '#64748b'} strokeWidth="1.5" className="w-8 h-8 transition-colors">
-                    <path d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                  </svg>
-                </div>
-                <div className="text-center">
-                  <p className="font-semibold text-slate-700">
+              <>
+                <DecorLeaf className="absolute -bottom-6 -left-6 h-20 w-20 text-emerald-300/40 sm:h-36 sm:w-36 dark:text-emerald-400/10" />
+                <DecorLeaf flip className="absolute -bottom-8 -right-6 h-24 w-24 text-emerald-300/40 sm:h-44 sm:w-44 dark:text-emerald-400/10" />
+                <div className="relative flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+                  <UploadIllustration />
+                  <p className="mt-3 text-xl font-extrabold text-slate-900 dark:text-white">
                     {dragging ? '¡Suelta la imagen aquí!' : 'Arrastra tu imagen aquí'}
                   </p>
-                  <p className="text-sm text-slate-400 mt-1">o haz clic para explorar archivos</p>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">o haz clic para seleccionar archivos</p>
+                  <div className="mt-3 flex items-center gap-3">
+                    {['JPG', 'PNG', 'WebP'].map((f) => (
+                      <span key={f} className="rounded-full border border-emerald-300 bg-emerald-50/80 px-4 py-1 text-xs font-bold text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-300">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 text-xs text-slate-400">
-                  {['JPG', 'PNG', 'WebP'].map(f => (
-                    <span key={f} className="rounded-full border border-slate-200 bg-white px-2.5 py-0.5 font-medium">{f}</span>
-                  ))}
-                </div>
-              </div>
+              </>
             )}
           </div>
         </div>
 
-        <div className="px-4 pb-4 flex flex-wrap items-center gap-3 justify-end">
-          {error && (
-            <p className="flex-1 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-2.5">
-              {error}
-            </p>
-          )}
-          <button
-            disabled={!file || loading}
-            onClick={analyze}
-            className="inline-flex items-center gap-2 rounded-xl px-7 py-3 font-bold text-sm transition-all duration-200 active:scale-95"
-            style={!file || loading
-              ? { background: '#f1f5f9', color: '#94a3b8', cursor: 'not-allowed' }
-              : { background: 'linear-gradient(135deg, #16a34a 0%, #15803d 100%)', color: 'white', boxShadow: '0 4px 20px rgba(22,163,74,0.35)' }
-            }
-          >
-            {loading ? (
-              <>
-                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-                </svg>
-                Analizando…
-              </>
-            ) : (
-              <>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
-                  <path d="M3 9V6a3 3 0 013-3h3M3 15v3a3 3 0 003 3h3M21 9V6a3 3 0 00-3-3h-3M21 15v3a3 3 0 01-3 3h-3"/>
-                  <rect x="7" y="7" width="10" height="10" rx="2"/>
-                </svg>
-                Analizar imagen
-              </>
+        {(file || error) && (
+          <div className="flex flex-wrap items-center justify-end gap-3 px-4 pb-4 sm:px-5">
+            {error && (
+              <p className="flex-1 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-600 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-300">
+                {error}
+              </p>
             )}
-          </button>
+            <button
+              type="button"
+              disabled={!file || loading}
+              onClick={analyze}
+              className={`inline-flex items-center gap-2 rounded-xl px-7 py-3 text-sm font-bold transition-all duration-200 active:scale-95 ${
+                !file || loading
+                  ? 'cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-white/5 dark:text-slate-500'
+                  : 'bg-linear-to-r from-emerald-500 to-green-600 text-white shadow-lg shadow-emerald-600/30 hover:brightness-105'
+              }`}
+            >
+              {loading ? (
+                <>
+                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                  </svg>
+                  Analizando…
+                </>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
+                    <path d="M3 9V6a3 3 0 013-3h3M3 15v3a3 3 0 003 3h3M21 9V6a3 3 0 00-3-3h-3M21 15v3a3 3 0 01-3 3h-3"/>
+                    <rect x="7" y="7" width="10" height="10" rx="2"/>
+                  </svg>
+                  Analizar imagen
+                </>
+              )}
+            </button>
+          </div>
+        )}
+
+        <div className="mx-4 mb-4 grid gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4 sm:mx-5 sm:mb-5 sm:grid-cols-3 sm:gap-0 sm:divide-x sm:divide-emerald-200/70 dark:border-white/10 dark:bg-white/[0.03] dark:sm:divide-white/10">
+          {UPLOAD_FEATURES.map(({ text, icon }) => (
+            <div key={text} className="flex items-center gap-3 sm:justify-center sm:px-4">
+              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-7 w-7 shrink-0 text-emerald-600 dark:text-emerald-400">{icon}</svg>
+              <p className="text-sm font-semibold leading-snug text-slate-700 dark:text-slate-200">{text}</p>
+            </div>
+          ))}
         </div>
-      </div>
+      </section>
 
       {/* ── Loading steps ─────────────────────────────────────────── */}
       {loading && (

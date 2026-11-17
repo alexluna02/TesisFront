@@ -1,12 +1,16 @@
-import { useState, useEffect, useMemo } from 'react'
-import { MapContainer, TileLayer, Polygon, Marker, Tooltip } from 'react-leaflet'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { MapContainer, TileLayer, Polygon, Marker, Tooltip, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { deleteAnalisis } from './api.js'
+import PageHero, { PageGlow } from './PageHero.jsx'
+import { apiErrorMessage, deleteAnalisis } from './api.js'
 import { exportAnalisisPDF } from './exportPDF.js'
-import { useTheme } from './ThemeContext.jsx'
-import { getParcelaSummaries, renameParcela, deleteParcela, deleteParcelVisit } from './AnalizarParcela.jsx'
-import { SEVERITY_PALETTE, lotSeverity, severityOf } from './severity.js'
+import {
+  getParcelaSummaries, renameParcela, deleteParcela, deleteParcelVisit, PARCELAS_KEY, PARCEL_HISTORY_KEY,
+} from './AnalizarParcela.jsx'
+import { SEVERITY_LIMITS, SEVERITY_PALETTE, lotSeverity, severityOf } from './severity.js'
+import { DISEASES, diseaseKey, diseaseMeta, recommendationsFor } from './diseases.js'
 
 // ── Leaflet icon fix ──────────────────────────────────────────────────────────
 delete L.Icon.Default.prototype._getIconUrl
@@ -16,78 +20,1197 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png',
 })
 
-// ── Shared constants ──────────────────────────────────────────────────────────
-const DISEASE_LABELS = {
-  Fondo_y_Sana: 'Sano', Fondo: 'Sano',
-  Tizon: 'Tizón', Roya: 'Roya',
-  Mancha_Blanca: 'Mancha Blanca', Mancha_blanca: 'Mancha Blanca',
-}
-const DISEASE_COLORS = {
-  Fondo_y_Sana: '#22c55e', Fondo: '#22c55e',
-  Tizon: '#f97316', Roya: '#f59e0b',
-  Mancha_Blanca: '#ef4444', Mancha_blanca: '#ef4444',
-}
+// ══════════════════════════════════════════════════════════════════════════════
+//    Estilos compartidos y utilidades
+// ══════════════════════════════════════════════════════════════════════════════
+const PAGE_SIZE = 8
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000
 
-// ── Risk styles ───────────────────────────────────────────────────────────────
-const SEVERITY_STYLES = {
-  Grave:    { bg: '#fef2f2', border: '#fecaca', badge: '#fee2e2', text: '#b91c1c', dot: '#ef4444' },
-  Moderada: { bg: '#fffbeb', border: '#fde68a', badge: '#fef3c7', text: '#b45309', dot: '#f59e0b' },
-  Leve:     { bg: '#f0fdf4', border: '#bbf7d0', badge: '#dcfce7', text: '#15803d', dot: '#22c55e' },
-  Sano:     { bg: '#f0fdf4', border: '#bbf7d0', badge: '#dcfce7', text: '#15803d', dot: '#22c55e' },
+const GLASS = 'rounded-3xl border border-white/70 bg-white/80 shadow-[0_12px_40px_-20px_rgba(15,23,42,0.25)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.04]'
+const ROW = 'rounded-2xl border border-slate-200/70 bg-white/90 p-3 shadow-sm transition-[border-color,box-shadow] hover:border-emerald-200 hover:shadow-[0_14px_34px_-18px_rgba(5,150,105,0.45)] dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-emerald-400/30'
+const BTN = {
+  primary: 'inline-flex items-center justify-center gap-2 rounded-xl bg-linear-to-r from-emerald-500 to-green-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-600/25 transition hover:brightness-105 active:scale-[0.98] disabled:opacity-60',
+  secondary: 'inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10',
+  danger: 'inline-flex items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-100 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-300 dark:hover:bg-red-500/20',
+  dangerSolid: 'inline-flex items-center justify-center gap-2 rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md shadow-red-600/25 transition hover:bg-red-700',
 }
 
-// ── Icons ─────────────────────────────────────────────────────────────────────
-const IcoTrash = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-4 h-4">
-    <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-  </svg>
-)
-const IcoCopy = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-4 h-4">
-    <path d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-  </svg>
-)
-const IcoCheck = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-4 h-4">
-    <path d="M5 13l4 4L19 7"/>
-  </svg>
-)
-const IcoChevron = ({ open }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-    className={`w-4 h-4 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}>
-    <path d="M19 9l-7 7-7-7"/>
-  </svg>
-)
-const IcoClock = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-8 h-8 text-slate-300">
-    <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-  </svg>
-)
+const normalize = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim()
+const fmtDate = (iso) => new Date(iso).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' })
+const fmtTime = (iso) => new Date(iso).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })
+const fmtDateTime = (iso) => `${fmtDate(iso)} • ${fmtTime(iso)}`
+const fmtPct = (v) => {
+  const n = Number(v) || 0
+  return `${n > 0 && n < 10 ? n.toFixed(1) : Math.round(n)}%`
+}
+const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
+const affectedOf = (item) => Number(item.affectedPercent ?? (item.confianza ?? 0) * 100) || 0
 
-// ── Parcel mini-map marker ────────────────────────────────────────────────────
+// Cantidad de registros por semana (las últimas `weeks` semanas, la más reciente al final)
+function weeklySeries(dates, weeks = 8) {
+  const now = Date.now()
+  const series = Array(weeks).fill(0)
+  dates.forEach((d) => {
+    const age = Math.floor((now - new Date(d).getTime()) / WEEK_MS)
+    if (age >= 0 && age < weeks) series[weeks - 1 - age] += 1
+  })
+  return series
+}
+
+function pageWindow(page, count) {
+  if (count <= 7) return Array.from({ length: count }, (_, i) => i + 1)
+  const nums = [...new Set([1, count, page - 1, page, page + 1])].filter((n) => n >= 1 && n <= count).sort((a, b) => a - b)
+  const out = []
+  nums.forEach((n, i) => {
+    if (i && n - nums[i - 1] > 1) out.push('…')
+    out.push(n)
+  })
+  return out
+}
+
+function usePaged(list, resetKey) {
+  const [page, setPage] = useState(1)
+  useEffect(() => { setPage(1) }, [resetKey])
+  const pageCount = Math.max(1, Math.ceil(list.length / PAGE_SIZE))
+  const current = Math.min(page, pageCount)
+  const start = (current - 1) * PAGE_SIZE
+  return {
+    page: current,
+    setPage,
+    pageCount,
+    total: list.length,
+    from: list.length ? start + 1 : 0,
+    to: Math.min(start + PAGE_SIZE, list.length),
+    items: list.slice(start, start + PAGE_SIZE),
+  }
+}
+
+// Enfermedad que más se repite entre las zonas con síntomas de una visita
+function visitDisease(visit) {
+  if (!visit) return null
+  const counts = {}
+  ;(visit.samples ?? []).forEach((s) => {
+    const k = diseaseKey(s.result?.target_class)
+    if (k && k !== 'sano') counts[k] = (counts[k] ?? 0) + 1
+  })
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
+  return top ? DISEASES[top[0]] : DISEASES.sano
+}
+
+const sickZones = (stats) => stats.sick ?? (stats.total - stats.healthy)
+
+const DISEASE_CHIPS = [
+  { id: 'mancha', label: 'Mancha Blanca' },
+  { id: 'tizon', label: 'Tizón del Maíz' },
+  { id: 'roya', label: 'Roya' },
+  { id: 'sano', label: 'Sanos' },
+]
+
+// ══════════════════════════════════════════════════════════════════════════════
+//    Iconos
+// ══════════════════════════════════════════════════════════════════════════════
+const Svg = ({ children, className = 'h-4 w-4', ...rest }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className} {...rest}>
+    {children}
+  </svg>
+)
+const IcoSearch = (p) => <Svg {...p}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></Svg>
+const IcoFilter = (p) => <Svg {...p}><path d="M3 5h18l-7 8.5V19l-4 2v-7.5z" /></Svg>
+const IcoChevronDown = (p) => <Svg {...p}><path d="m6 9 6 6 6-6" /></Svg>
+const IcoChevronLeft = (p) => <Svg {...p}><path d="m15 18-6-6 6-6" /></Svg>
+const IcoChevronRight = (p) => <Svg {...p}><path d="m9 18 6-6-6-6" /></Svg>
+const IcoSort = (p) => <Svg {...p}><path d="M7 4v16M3 8l4-4 4 4M17 20V4M13 16l4 4 4-4" /></Svg>
+const IcoCalendar = (p) => <Svg {...p}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" /></Svg>
+const IcoTriangle = (p) => <Svg {...p}><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" /><path d="M12 9v4M12 17h.01" /></Svg>
+const IcoAlert = (p) => <Svg {...p}><circle cx="12" cy="12" r="9" /><path d="M12 8v4M12 16h.01" /></Svg>
+const IcoCheck = (p) => <Svg {...p}><circle cx="12" cy="12" r="9" /><path d="m8.5 12.5 2.5 2.5 4.5-5" /></Svg>
+const IcoShield = (p) => <Svg {...p}><path d="M12 3 5 6v5c0 4.5 3 8.3 7 9.5 4-1.2 7-5 7-9.5V6z" /><path d="m9 12 2 2 4-4" /></Svg>
+const IcoArrowRight = (p) => <Svg {...p}><path d="M5 12h14M13 6l6 6-6 6" /></Svg>
+const IcoMore = (p) => <Svg {...p}><circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" /></Svg>
+const IcoLeaf = (p) => <Svg {...p}><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z" /><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12" /></Svg>
+const IcoChart = (p) => <Svg {...p}><path d="M4 20V10M10 20V4M16 20v-7M22 20H2" /></Svg>
+const IcoGrid = (p) => <Svg {...p}><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></Svg>
+const IcoMap = (p) => <Svg {...p}><path d="M9 4 3 6.5V20l6-2.5 6 2.5 6-2.5V4l-6 2.5z" /><path d="M9 4v13.5M15 6.5V20" /></Svg>
+const IcoLayers = (p) => <Svg {...p}><path d="m12 3 9 5-9 5-9-5z" /><path d="m3 13 9 5 9-5" /></Svg>
+const IcoTrash = (p) => <Svg {...p}><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></Svg>
+const IcoCopy = (p) => <Svg {...p}><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h10" /></Svg>
+const IcoPdf = (p) => <Svg {...p}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></Svg>
+const IcoEye = (p) => <Svg {...p}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></Svg>
+const IcoX = (p) => <Svg {...p}><path d="M18 6 6 18M6 6l12 12" /></Svg>
+const IcoPencil = (p) => <Svg {...p}><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></Svg>
+const IcoScan = (p) => <Svg {...p}><path d="M3 8V5a2 2 0 0 1 2-2h3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3M7 12h10" /></Svg>
+
+// ══════════════════════════════════════════════════════════════════════════════
+//    Componentes de interfaz
+// ══════════════════════════════════════════════════════════════════════════════
+const HERO_COPY = {
+  individual: { highlight: 'individual', subtitle: 'Diagnósticos imagen por imagen de tus cultivos' },
+  parcelas: { highlight: 'por parcela', subtitle: 'Seguimiento de tus lotes, visita a visita' },
+}
+
+function Sparkline({ series, color, className }) {
+  const id = `spark${useId().replace(/:/g, '')}`
+  const w = 100
+  const h = 40
+  const max = Math.max(...series, 1)
+  const pts = series.map((v, i) => [(i / Math.max(series.length - 1, 1)) * w, h - 4 - (v / max) * (h - 10)])
+  const line = pts.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join(' ')
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className={className} aria-hidden="true">
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.3" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={`${line} L${w} ${h} L0 ${h} Z`} fill={`url(#${id})`} />
+      <path d={line} fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+    </svg>
+  )
+}
+
+const KPI_TONES = {
+  emerald: {
+    icon: 'from-emerald-400 to-green-600 shadow-emerald-600/30',
+    line: '#10b981',
+    card: 'border-white/70 bg-white/80 dark:border-white/10 dark:bg-white/[0.04]',
+    ring: 'ring-emerald-500/70',
+  },
+  teal: {
+    icon: 'from-teal-400 to-emerald-600 shadow-teal-600/30',
+    line: '#14b8a6',
+    card: 'border-white/70 bg-white/80 dark:border-white/10 dark:bg-white/[0.04]',
+    ring: 'ring-teal-500/70',
+  },
+  red: {
+    icon: 'from-rose-400 to-red-600 shadow-red-600/30',
+    line: '#ef4444',
+    card: 'border-rose-100 bg-linear-to-br from-rose-50 to-white/80 dark:border-rose-400/20 dark:from-rose-500/10 dark:to-white/[0.03]',
+    ring: 'ring-red-500/70',
+  },
+}
+
+function KpiCard({ icon: Icon, value, label, series, tone = 'emerald', active = false, onClick, title }) {
+  const t = KPI_TONES[tone]
+  const Tag = onClick ? 'button' : 'div'
+  return (
+    <Tag
+      type={onClick ? 'button' : undefined}
+      onClick={onClick}
+      aria-pressed={onClick ? active : undefined}
+      title={title}
+      className={`relative flex w-full flex-col gap-2 overflow-hidden rounded-3xl border p-3 text-left shadow-[0_12px_40px_-22px_rgba(15,23,42,0.3)] backdrop-blur-xl transition sm:flex-row sm:items-center sm:gap-4 sm:p-5 ${t.card} ${
+        onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-lg' : ''
+      } ${active ? `ring-2 ${t.ring}` : ''}`}
+    >
+      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-linear-to-br text-white shadow-lg sm:h-14 sm:w-14 ${t.icon}`}>
+        <Icon className="h-5 w-5 sm:h-7 sm:w-7" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-2xl font-extrabold leading-none tracking-tight text-slate-900 sm:text-3xl dark:text-white">{value}</span>
+        <span className="mt-1 block text-[11px] font-medium leading-tight text-slate-500 sm:text-sm dark:text-slate-400">{label}</span>
+      </span>
+      {series && <Sparkline series={series} color={t.line} className="ml-auto hidden h-11 w-24 shrink-0 sm:block" />}
+    </Tag>
+  )
+}
+
+function SearchInput({ value, onChange, placeholder }) {
+  return (
+    <label className="relative block flex-1">
+      <span className="sr-only">Buscar</span>
+      <IcoSearch className="pointer-events-none absolute left-4 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-slate-400" />
+      <input
+        type="search"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="h-12 w-full rounded-2xl border border-white/70 bg-white/80 pl-11 pr-4 text-sm text-slate-800 shadow-sm outline-none backdrop-blur-xl transition placeholder:text-slate-400 focus:border-emerald-300 focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-100 dark:placeholder:text-slate-500"
+      />
+    </label>
+  )
+}
+
+function FiltersButton({ open, count, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-expanded={open}
+      className={`inline-flex h-12 shrink-0 items-center justify-center gap-2 rounded-2xl border px-5 text-sm font-semibold shadow-sm backdrop-blur-xl transition ${
+        open
+          ? 'border-emerald-400 bg-emerald-50 text-emerald-800 dark:border-emerald-400/40 dark:bg-emerald-400/10 dark:text-emerald-200'
+          : 'border-emerald-200 bg-white/80 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-400/25 dark:bg-white/[0.04] dark:text-emerald-300 dark:hover:bg-emerald-400/10'
+      }`}
+    >
+      <IcoFilter className="h-[18px] w-[18px]" />
+      Filtros
+      {count > 0 && (
+        <span className="grid h-5 min-w-5 place-items-center rounded-full bg-emerald-600 px-1.5 text-[11px] font-bold text-white">{count}</span>
+      )}
+      <IcoChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+    </button>
+  )
+}
+
+function Chip({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold transition ${
+        active
+          ? 'border-emerald-700 bg-emerald-700 text-white shadow-md shadow-emerald-700/25 dark:border-emerald-500 dark:bg-emerald-600'
+          : 'border-white/80 bg-white/80 text-slate-700 shadow-sm hover:border-emerald-200 hover:text-emerald-800 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300 dark:hover:border-emerald-400/30 dark:hover:text-emerald-200'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function DiseaseChips({ value, onChange, allLabel }) {
+  return (
+    <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none]">
+      <Chip active={value === 'todos'} onClick={() => onChange('todos')}>
+        <IcoGrid className="h-4 w-4" />
+        {allLabel}
+      </Chip>
+      {DISEASE_CHIPS.map(({ id, label }) => (
+        <Chip key={id} active={value === id} onClick={() => onChange(value === id ? 'todos' : id)}>
+          <IcoLeaf className="h-4 w-4" style={{ color: DISEASES[id].color }} />
+          {label}
+        </Chip>
+      ))}
+    </div>
+  )
+}
+
+function SortSelect({ value, onChange, options }) {
+  return (
+    <label className="flex shrink-0 items-center gap-2 text-sm text-slate-500 dark:text-slate-400">
+      <IcoSort className="h-4 w-4" />
+      <span className="whitespace-nowrap">Ordenar por:</span>
+      <span className="relative">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-10 cursor-pointer appearance-none rounded-xl border border-white/80 bg-white/80 pl-3 pr-9 text-sm font-semibold text-slate-800 shadow-sm outline-none backdrop-blur-xl focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10 dark:bg-[#111c2e] dark:text-slate-100"
+        >
+          {options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+        </select>
+        <IcoChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+      </span>
+    </label>
+  )
+}
+
+function FilterGroup({ label, children }) {
+  return (
+    <div>
+      <p className="mb-2 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">{label}</p>
+      <div className="flex flex-wrap items-center gap-2">{children}</div>
+    </div>
+  )
+}
+
+function Pill({ active, onClick, children }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+        active
+          ? 'bg-emerald-600 text-white shadow-sm'
+          : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function DateField({ label, value, onChange, min, max }) {
+  return (
+    <label className="flex items-center gap-2 text-xs font-semibold text-slate-500 dark:text-slate-400">
+      {label}
+      <input
+        type="date"
+        value={value}
+        min={min}
+        max={max}
+        onChange={(e) => onChange(e.target.value)}
+        className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none [color-scheme:light] focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:[color-scheme:dark]"
+      />
+    </label>
+  )
+}
+
+const SEVERITY_UI = {
+  Sano: { Icon: IcoShield, cls: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-400/25 dark:bg-emerald-400/10 dark:text-emerald-300' },
+  Leve: { Icon: IcoCheck, cls: 'border-lime-200 bg-lime-50 text-lime-700 dark:border-lime-400/25 dark:bg-lime-400/10 dark:text-lime-300' },
+  Moderada: { Icon: IcoAlert, cls: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-300' },
+  Grave: { Icon: IcoTriangle, cls: 'border-red-200 bg-red-50 text-red-700 dark:border-red-400/25 dark:bg-red-400/10 dark:text-red-300' },
+}
+
+function SeverityBadge({ level, className = '' }) {
+  const ui = SEVERITY_UI[level]
+  if (!ui) {
+    return (
+      <span className={`inline-flex items-center justify-center rounded-xl border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-400 dark:border-white/10 ${className}`}>
+        Sin datos
+      </span>
+    )
+  }
+  return (
+    <span
+      title={level === 'Sano' ? 'Sin enfermedad detectada' : `Severidad ${level.toLowerCase()} según el área afectada`}
+      className={`inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border px-3 py-1.5 text-xs font-bold ${ui.cls} ${className}`}
+    >
+      <ui.Icon className="h-4 w-4" />
+      {level === 'Sano' ? 'Sano' : (
+        <>
+          <span className="sm:hidden">{level}</span>
+          <span className="hidden sm:inline">Severidad {level.toLowerCase()}</span>
+        </>
+      )}
+    </span>
+  )
+}
+
+function AffectedValue({ value, caption = 'afectado', delta = null }) {
+  const empty = value == null
+  return (
+    <div className="w-[4.5rem] shrink-0 text-right">
+      <p className="text-xl font-extrabold leading-none tabular-nums text-slate-900 dark:text-white">{empty ? '—' : fmtPct(value)}</p>
+      {empty ? (
+        <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">sin datos</p>
+      ) : delta != null && delta !== 0 ? (
+        <p className={`mt-1 text-[11px] font-bold ${delta > 0 ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
+          {delta > 0 ? '▲' : '▼'} {Math.abs(delta)} pts
+        </p>
+      ) : (
+        <p className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{caption}</p>
+      )}
+    </div>
+  )
+}
+
+function DetailButton({ onClick, className = '' }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-emerald-200 bg-white px-4 py-2 text-sm font-semibold text-emerald-700 transition hover:border-emerald-300 hover:bg-emerald-50 dark:border-emerald-400/30 dark:bg-transparent dark:text-emerald-300 dark:hover:bg-emerald-400/10 ${className}`}
+    >
+      Ver detalle <IcoArrowRight className="h-4 w-4" />
+    </button>
+  )
+}
+
+function RowMenu({ items, onOpenChange }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const toggle = (next) => {
+    setOpen(next)
+    onOpenChange?.(next)
+  }
+  useEffect(() => {
+    if (!open) return undefined
+    const onDown = (e) => { if (!ref.current?.contains(e.target)) toggle(false) }
+    const onKey = (e) => { if (e.key === 'Escape') toggle(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        aria-label="Más acciones"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => toggle(!open)}
+        className="grid h-9 w-9 place-items-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-100"
+      >
+        <IcoMore className="h-5 w-5" />
+      </button>
+      {open && (
+        <div role="menu" className="fade-in absolute right-0 top-full z-30 mt-2 w-52 overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl dark:border-white/10 dark:bg-[#0f1a2b]">
+          {items.map(({ label, Icon, onClick, danger, disabled }) => (
+            <button
+              key={label}
+              type="button"
+              role="menuitem"
+              disabled={disabled}
+              onClick={() => { toggle(false); onClick() }}
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-sm font-medium transition disabled:opacity-50 ${
+                danger
+                  ? 'text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-500/10'
+                  : 'text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-white/5'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Pagination({ paged, onPage }) {
+  const { page, pageCount, from, to, total } = paged
+  if (!total) return null
+  const btn = 'grid h-9 min-w-9 place-items-center rounded-xl px-2 text-sm font-semibold transition disabled:pointer-events-none disabled:opacity-40'
+  return (
+    <div className="flex flex-col items-center justify-between gap-3 pt-1 sm:flex-row">
+      <p className="text-sm text-slate-500 dark:text-slate-400">
+        Mostrando <span className="font-semibold text-slate-700 dark:text-slate-200">{from} – {to}</span> de{' '}
+        <span className="font-semibold text-slate-700 dark:text-slate-200">{total}</span> resultado{total === 1 ? '' : 's'}
+      </p>
+      {pageCount > 1 && (
+        <nav aria-label="Paginación" className="flex items-center gap-1.5">
+          <button type="button" aria-label="Página anterior" disabled={page === 1} onClick={() => onPage(page - 1)} className={`${btn} text-slate-500 hover:bg-white dark:hover:bg-white/10`}>
+            <IcoChevronLeft className="h-4 w-4" />
+          </button>
+          {pageWindow(page, pageCount).map((p, i) => (p === '…' ? (
+            <span key={`gap${i}`} className="px-1 text-slate-400">…</span>
+          ) : (
+            <button
+              key={p}
+              type="button"
+              aria-current={p === page ? 'page' : undefined}
+              onClick={() => onPage(p)}
+              className={`${btn} ${
+                p === page
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                  : 'border border-white/80 bg-white/80 text-slate-600 hover:border-emerald-200 dark:border-white/10 dark:bg-white/[0.04] dark:text-slate-300'
+              }`}
+            >
+              {p}
+            </button>
+          )))}
+          <button type="button" aria-label="Página siguiente" disabled={page === pageCount} onClick={() => onPage(page + 1)} className={`${btn} text-slate-500 hover:bg-white dark:hover:bg-white/10`}>
+            <IcoChevronRight className="h-4 w-4" />
+          </button>
+        </nav>
+      )}
+    </div>
+  )
+}
+
+function EmptyState({ icon: Icon, title, text, action }) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-3xl border border-dashed border-emerald-200 bg-white/60 px-6 py-14 text-center backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.03]">
+      <div className="mb-4 grid h-16 w-16 place-items-center rounded-2xl bg-linear-to-br from-emerald-400/20 to-green-600/20 text-emerald-600 ring-1 ring-emerald-500/20 dark:text-emerald-400">
+        <Icon className="h-8 w-8" />
+      </div>
+      <p className="text-base font-bold text-slate-800 dark:text-slate-100">{title}</p>
+      <p className="mt-1 max-w-sm text-sm text-slate-500 dark:text-slate-400">{text}</p>
+      {action && <div className="mt-5">{action}</div>}
+    </div>
+  )
+}
+
+function Metric({ label, value, valueClass = 'text-slate-900 dark:text-white' }) {
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-slate-50/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-400">{label}</p>
+      <p className={`mt-1 text-base font-extrabold ${valueClass}`}>{value}</p>
+    </div>
+  )
+}
+
+// Barra de la escala de severidad (0–30 %) con la posición del análisis
+function AffectedScale({ value }) {
+  const scale = SEVERITY_LIMITS.grave * 2
+  const at = (v) => (Math.min(Math.max(v, 0), scale) / scale) * 100
+  const p1 = at(SEVERITY_LIMITS.moderada)
+  const p2 = at(SEVERITY_LIMITS.grave)
+  return (
+    <div>
+      <div className="relative">
+        <div
+          className="h-2.5 rounded-full"
+          style={{ background: `linear-gradient(90deg, #84cc16 0 ${p1}%, #f59e0b ${p1}% ${p2}%, #ef4444 ${p2}% 100%)` }}
+        />
+        <span
+          className="absolute top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white bg-slate-900 shadow-md dark:border-[#0d1726] dark:bg-white"
+          style={{ left: `${at(value)}%` }}
+        />
+      </div>
+      <div className="relative mt-2 h-4 text-[10px] font-semibold text-slate-400">
+        <span className="absolute left-0">0%</span>
+        <span className="absolute -translate-x-1/2" style={{ left: `${p1}%` }}>{SEVERITY_LIMITS.moderada}%</span>
+        <span className="absolute -translate-x-1/2" style={{ left: `${p2}%` }}>{SEVERITY_LIMITS.grave}%</span>
+        <span className="absolute right-0">{scale}%+</span>
+      </div>
+    </div>
+  )
+}
+
+function Figure({ src, label, empty }) {
+  return (
+    <figure className="relative aspect-[4/3] overflow-hidden rounded-2xl border border-slate-100 bg-slate-100 dark:border-white/10 dark:bg-white/[0.03]">
+      {src
+        ? <img src={src} alt={label} className="absolute inset-0 h-full w-full object-cover" />
+        : <div className="absolute inset-0 grid place-items-center px-6 text-center text-xs text-slate-400">{empty}</div>}
+      <figcaption className="absolute left-3 top-3 rounded-lg bg-slate-950/60 px-2.5 py-1 text-[11px] font-semibold text-white backdrop-blur">{label}</figcaption>
+    </figure>
+  )
+}
+
+// ── Modales (en un portal para quedar sobre la barra superior y el menú lateral)
+const modalStack = []
+
+function Modal({ onClose, labelledBy, size = 'max-w-3xl', children }) {
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+  useEffect(() => {
+    const token = {}
+    modalStack.push(token)
+    const onKey = (e) => {
+      if (e.key === 'Escape' && modalStack[modalStack.length - 1] === token) closeRef.current()
+    }
+    document.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      modalStack.splice(modalStack.indexOf(token), 1)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [])
+  return createPortal(
+    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby={labelledBy}>
+      <div className="fade-in absolute inset-0 bg-slate-950/55 backdrop-blur-sm" onClick={() => closeRef.current()} />
+      <div className={`fade-up relative flex max-h-[92vh] w-full ${size} flex-col overflow-hidden rounded-t-3xl border border-white/60 bg-white shadow-2xl sm:rounded-3xl dark:border-white/10 dark:bg-[#0d1726]`}>
+        {children}
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
+function useConfirm() {
+  const [request, setRequest] = useState(null)
+  const confirm = useCallback((options) => new Promise((resolve) => setRequest({ ...options, resolve })), [])
+  const settle = (value) => {
+    request?.resolve(value)
+    setRequest(null)
+  }
+  const dialog = request ? (
+    <Modal onClose={() => settle(false)} labelledBy="confirmar-titulo" size="max-w-md">
+      <div className="p-6">
+        <div className="flex items-start gap-4">
+          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400">
+            <IcoTriangle className="h-5 w-5" />
+          </span>
+          <div>
+            <h3 id="confirmar-titulo" className="text-lg font-bold text-slate-900 dark:text-white">{request.title}</h3>
+            <p className="mt-1 text-sm leading-relaxed text-slate-500 dark:text-slate-400">{request.message}</p>
+          </div>
+        </div>
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button type="button" autoFocus onClick={() => settle(false)} className={BTN.secondary}>Cancelar</button>
+          <button type="button" onClick={() => settle(true)} className={BTN.dangerSolid}>{request.confirmLabel ?? 'Eliminar'}</button>
+        </div>
+      </div>
+    </Modal>
+  ) : null
+  return [confirm, dialog]
+}
+
+function useToast() {
+  const [toast, setToast] = useState(null)
+  const timer = useRef(null)
+  const show = useCallback((message, tone = 'success') => {
+    clearTimeout(timer.current)
+    setToast({ message, tone, key: Date.now() })
+    timer.current = setTimeout(() => setToast(null), 3200)
+  }, [])
+  useEffect(() => () => clearTimeout(timer.current), [])
+  const node = toast ? createPortal(
+    <div className="pointer-events-none fixed inset-x-0 bottom-6 z-[60] flex justify-center px-4">
+      <div
+        key={toast.key}
+        role="status"
+        className={`fade-up pointer-events-auto flex items-center gap-2.5 rounded-2xl px-4 py-3 text-sm font-semibold shadow-2xl ${
+          toast.tone === 'error' ? 'bg-red-600 text-white' : 'bg-slate-900 text-white dark:bg-emerald-500 dark:text-emerald-950'
+        }`}
+      >
+        {toast.tone === 'error' ? <IcoAlert className="h-5 w-5 shrink-0" /> : <IcoCheck className="h-5 w-5 shrink-0" />}
+        {toast.message}
+      </div>
+    </div>,
+    document.body,
+  ) : null
+  return [show, node]
+}
+
+function RenameDialog({ initial, onCancel, onSave }) {
+  const [value, setValue] = useState(initial)
+  const submit = (e) => {
+    e.preventDefault()
+    const v = value.trim()
+    if (v) onSave(v)
+  }
+  return (
+    <Modal onClose={onCancel} labelledBy="renombrar-titulo" size="max-w-md">
+      <form onSubmit={submit} className="p-6">
+        <h3 id="renombrar-titulo" className="text-lg font-bold text-slate-900 dark:text-white">Renombrar parcela</h3>
+        <input
+          autoFocus
+          value={value}
+          maxLength={60}
+          onChange={(e) => setValue(e.target.value)}
+          className="mt-4 h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm text-slate-800 outline-none focus:border-emerald-300 focus:ring-4 focus:ring-emerald-500/15 dark:border-white/10 dark:bg-white/5 dark:text-slate-100"
+        />
+        <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button type="button" onClick={onCancel} className={BTN.secondary}>Cancelar</button>
+          <button type="submit" disabled={!value.trim()} className={BTN.primary}>Guardar</button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//    Análisis por planta (diagnóstico individual)
+// ══════════════════════════════════════════════════════════════════════════════
+function Thumb({ src, color }) {
+  return (
+    <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl ring-1 ring-black/5 sm:h-16 sm:w-16 dark:ring-white/10" style={{ background: `${color}1f` }}>
+      {src
+        ? <img src={src} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" />
+        : <IcoLeaf className="absolute inset-0 m-auto h-6 w-6" style={{ color }} />}
+    </div>
+  )
+}
+
+function AnalysisRow({ item, onOpen, menuItems }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const meta = diseaseMeta(item.enfermedad)
+  const affected = affectedOf(item)
+  return (
+    <li className={`relative ${menuOpen ? 'z-20' : ''} ${ROW}`}>
+      <div className="flex items-center gap-3 lg:gap-4">
+        <Thumb src={item.imagen} color={meta.color} />
+        <div className="min-w-0 flex-1 xl:w-56 xl:flex-none">
+          <p className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: meta.color }} />
+            <span className="truncate">{meta.label}</span>
+          </p>
+          <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            <IcoCalendar className="h-3.5 w-3.5 shrink-0" />
+            {fmtDateTime(item.fecha)}
+          </p>
+        </div>
+        <div className="hidden h-10 w-px shrink-0 bg-slate-200 xl:block dark:bg-white/10" />
+        <p className="hidden min-w-0 flex-1 text-sm leading-snug text-slate-600 xl:block dark:text-slate-300">{meta.description}</p>
+        <div className="hidden lg:block">
+          <SeverityBadge level={item.severidad} className="min-w-[10.5rem]" />
+        </div>
+        <AffectedValue value={affected} />
+        <div className="hidden lg:block">
+          <DetailButton onClick={onOpen} />
+        </div>
+        <RowMenu items={menuItems} onOpenChange={setMenuOpen} />
+      </div>
+      <div className="mt-3 space-y-3 lg:hidden">
+        <p className="text-sm text-slate-600 dark:text-slate-300">{meta.description}</p>
+        <div className="flex items-center justify-between gap-3">
+          <SeverityBadge level={item.severidad} />
+          <DetailButton onClick={onOpen} />
+        </div>
+      </div>
+    </li>
+  )
+}
+
+function AnalysisDetail({ item, exporting, onClose, onExport, onCopy, onDelete }) {
+  const meta = diseaseMeta(item.enfermedad)
+  const affected = affectedOf(item)
+  const recs = recommendationsFor(item.enfermedad)
+  return (
+    <Modal onClose={onClose} labelledBy="detalle-titulo">
+      <header className="flex shrink-0 items-start gap-3 border-b border-slate-100 px-5 py-4 sm:px-6 dark:border-white/10">
+        <span className="mt-2 h-3 w-3 shrink-0 rounded-full" style={{ background: meta.color, boxShadow: `0 0 0 4px ${meta.color}33` }} />
+        <div className="min-w-0 flex-1">
+          <h2 id="detalle-titulo" className="truncate text-lg font-extrabold text-slate-900 dark:text-white">{meta.label}</h2>
+          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            <IcoCalendar className="h-3.5 w-3.5" />
+            {fmtDateTime(item.fecha)}
+          </p>
+        </div>
+        <div className="hidden sm:block">
+          <SeverityBadge level={item.severidad} />
+        </div>
+        <button type="button" aria-label="Cerrar" onClick={onClose} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-slate-200">
+          <IcoX className="h-5 w-5" />
+        </button>
+      </header>
+
+      <div className="flex-1 space-y-5 overflow-y-auto p-5 sm:p-6">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Figure src={item.imagen} label="Imagen analizada" empty="Imagen no disponible" />
+          <Figure src={item.xaiImage} label="Mapa de atención (Grad-CAM)" empty="Este análisis no tiene mapa Grad-CAM" />
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Metric label="Área afectada" value={fmtPct(affected)} />
+          <Metric label="Severidad" value={item.severidad ?? '—'} />
+          <Metric label="Estado" value={item.estado ?? '—'} />
+          <Metric label="Cultivo" value={item.cultivo || 'Maíz'} />
+        </div>
+
+        <div className="rounded-2xl border border-slate-100 p-4 dark:border-white/10">
+          <p className="mb-3 text-[11px] font-bold uppercase tracking-[0.14em] text-slate-400">Escala de severidad</p>
+          <AffectedScale value={affected} />
+          {meta.description && <p className="mt-3 text-sm text-slate-600 dark:text-slate-300">{meta.description}</p>}
+        </div>
+
+        {recs.length > 0 && (
+          <section>
+            <h3 className="mb-3 text-sm font-bold text-slate-900 dark:text-white">Recomendaciones agronómicas</h3>
+            <ol className="grid gap-2.5 sm:grid-cols-2">
+              {recs.map((r, i) => (
+                <li key={r.title} className="flex gap-3 rounded-2xl border border-slate-100 bg-slate-50/80 p-3.5 dark:border-white/10 dark:bg-white/[0.03]">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full text-[11px] font-black text-white" style={{ background: meta.color }}>{i + 1}</span>
+                  <div>
+                    <p className="text-sm font-bold text-slate-800 dark:text-slate-100">{r.title}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-slate-500 dark:text-slate-400">{r.body}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+      </div>
+
+      <footer className="flex shrink-0 flex-wrap items-center gap-2 border-t border-slate-100 px-5 py-4 sm:px-6 dark:border-white/10">
+        <button type="button" onClick={onDelete} className={BTN.danger}>
+          <IcoTrash className="h-4 w-4" /> Eliminar
+        </button>
+        <div className="ml-auto flex gap-2">
+          <button type="button" onClick={onCopy} className={BTN.secondary}>
+            <IcoCopy className="h-4 w-4" /> Copiar
+          </button>
+          <button type="button" onClick={onExport} disabled={exporting} className={BTN.primary}>
+            <IcoPdf className="h-4 w-4" /> {exporting ? 'Generando…' : 'Exportar PDF'}
+          </button>
+        </div>
+      </footer>
+    </Modal>
+  )
+}
+
+const PLANT_SORTS = [
+  { id: 'recientes', label: 'Más recientes' },
+  { id: 'antiguos', label: 'Más antiguos' },
+  { id: 'mayor', label: 'Mayor afectación' },
+  { id: 'menor', label: 'Menor afectación' },
+]
+
+function PlantHistory({ history, onHistoryChange, onGoAnalizar, confirm, toast }) {
+  const [query, setQuery] = useState('')
+  const [disease, setDisease] = useState('todos')
+  const [estado, setEstado] = useState('todos')
+  const [severity, setSeverity] = useState('todas')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [sort, setSort] = useState('recientes')
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [detailId, setDetailId] = useState(null)
+  const [exportingId, setExportingId] = useState(null)
+  const listRef = useRef(null)
+
+  const stats = useMemo(() => {
+    const healthy = history.filter((i) => i.estado === 'Sano')
+    const sick = history.filter((i) => i.estado !== 'Sano')
+    return {
+      total: history.length,
+      healthy: healthy.length,
+      sick: sick.length,
+      seriesTotal: weeklySeries(history.map((i) => i.fecha)),
+      seriesHealthy: weeklySeries(healthy.map((i) => i.fecha)),
+      seriesSick: weeklySeries(sick.map((i) => i.fecha)),
+    }
+  }, [history])
+
+  const filtered = useMemo(() => {
+    const q = normalize(query)
+    const fromTs = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null
+    const toTs = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null
+    const list = history.filter((item) => {
+      if (disease !== 'todos' && diseaseKey(item.enfermedad) !== disease) return false
+      if (estado === 'Sano' && item.estado !== 'Sano') return false
+      if (estado === 'Con enfermedad' && item.estado === 'Sano') return false
+      if (severity !== 'todas' && item.severidad !== severity) return false
+      const ts = new Date(item.fecha).getTime()
+      if (fromTs && ts < fromTs) return false
+      if (toTs && ts > toTs) return false
+      if (!q) return true
+      const meta = diseaseMeta(item.enfermedad)
+      const haystack = normalize([
+        meta.label, meta.short, item.severidad, item.estado,
+        fmtDate(item.fecha), new Date(item.fecha).toLocaleDateString('es-ES'),
+      ].join(' '))
+      return haystack.includes(q)
+    })
+    const byDate = (a, b) => new Date(b.fecha) - new Date(a.fecha)
+    const sorters = {
+      recientes: byDate,
+      antiguos: (a, b) => byDate(b, a),
+      mayor: (a, b) => affectedOf(b) - affectedOf(a) || byDate(a, b),
+      menor: (a, b) => affectedOf(a) - affectedOf(b) || byDate(a, b),
+    }
+    return [...list].sort(sorters[sort] ?? byDate)
+  }, [history, query, disease, estado, severity, dateFrom, dateTo, sort])
+
+  const paged = usePaged(filtered, [query, disease, estado, severity, dateFrom, dateTo, sort].join('|'))
+  const activeFilters = (estado !== 'todos') + (severity !== 'todas') + Boolean(dateFrom) + Boolean(dateTo)
+
+  const resetFilters = () => {
+    setQuery('')
+    setDisease('todos')
+    setEstado('todos')
+    setSeverity('todas')
+    setDateFrom('')
+    setDateTo('')
+  }
+
+  const goToPage = (p) => {
+    paged.setPage(p)
+    listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  const removeItem = async (item) => {
+    const meta = diseaseMeta(item.enfermedad)
+    const ok = await confirm({
+      title: '¿Eliminar este análisis?',
+      message: `Se borrará el diagnóstico de ${meta.label} del ${fmtDate(item.fecha)}. Esta acción no se puede deshacer.`,
+    })
+    if (!ok) return
+    try {
+      await deleteAnalisis(item.id)
+    } catch (err) {
+      // Si ya no existe en el servidor, también se quita de la lista
+      if (err?.response?.status !== 404) {
+        toast(apiErrorMessage(err, 'No se pudo eliminar el análisis.'), 'error')
+        return
+      }
+    }
+    onHistoryChange?.(history.filter((i) => i.id !== item.id))
+    if (detailId === item.id) setDetailId(null)
+    toast('Análisis eliminado')
+  }
+
+  const clearAll = async () => {
+    const ok = await confirm({
+      title: '¿Eliminar todo el historial?',
+      message: `Se borrarán los ${history.length} análisis por planta. Esta acción no se puede deshacer.`,
+      confirmLabel: 'Eliminar todo',
+    })
+    if (!ok) return
+    const results = await Promise.allSettled(history.map((i) => deleteAnalisis(i.id)))
+    const failed = new Set(history
+      .filter((_, idx) => results[idx].status === 'rejected' && results[idx].reason?.response?.status !== 404)
+      .map((i) => i.id))
+    onHistoryChange?.(history.filter((i) => failed.has(i.id)))
+    setFiltersOpen(false)
+    if (failed.size) toast(`No se pudieron eliminar ${plural(failed.size, 'análisis', 'análisis')}.`, 'error')
+    else toast('Historial eliminado')
+  }
+
+  const exportPdf = async (item) => {
+    setExportingId(item.id)
+    try {
+      await exportAnalisisPDF({
+        diseaseLabel: diseaseMeta(item.enfermedad).label,
+        affectedPercent: affectedOf(item),
+        severity: item.severidad,
+        fecha: item.fecha,
+        originalImg: item.imagen ?? null,
+        xaiImg: item.xaiImage ?? null,
+        recommendations: recommendationsFor(item.enfermedad),
+      })
+    } catch {
+      toast('No se pudo generar el PDF.', 'error')
+    } finally {
+      setExportingId(null)
+    }
+  }
+
+  const copySummary = async (item) => {
+    const meta = diseaseMeta(item.enfermedad)
+    const recs = recommendationsFor(item.enfermedad)
+    const text = [
+      `Diagnóstico: ${meta.label}`,
+      `Severidad: ${item.severidad}`,
+      `Área afectada: ${fmtPct(affectedOf(item))}`,
+      `Fecha: ${fmtDateTime(item.fecha)}`,
+      recs.length ? `Recomendaciones: ${recs.map((r) => r.title).join('; ')}` : null,
+    ].filter(Boolean).join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      toast('Resumen copiado al portapapeles')
+    } catch {
+      toast('No se pudo copiar el resumen.', 'error')
+    }
+  }
+
+  const menuFor = (item) => [
+    { label: 'Ver detalle', Icon: IcoEye, onClick: () => setDetailId(item.id) },
+    { label: 'Exportar PDF', Icon: IcoPdf, onClick: () => exportPdf(item), disabled: exportingId === item.id },
+    { label: 'Copiar resumen', Icon: IcoCopy, onClick: () => copySummary(item) },
+    { label: 'Eliminar', Icon: IcoTrash, onClick: () => removeItem(item), danger: true },
+  ]
+
+  const detailItem = detailId ? history.find((i) => i.id === detailId) : null
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-3 gap-2 sm:gap-4">
+        <KpiCard
+          icon={IcoChart}
+          value={stats.total}
+          label="Total de análisis"
+          series={stats.seriesTotal}
+          onClick={() => setEstado('todos')}
+          title="Análisis por semana (últimas 8 semanas)"
+        />
+        <KpiCard
+          icon={IcoLeaf}
+          value={stats.healthy}
+          label="Cultivos sanos"
+          series={stats.seriesHealthy}
+          tone="teal"
+          active={estado === 'Sano'}
+          onClick={() => setEstado(estado === 'Sano' ? 'todos' : 'Sano')}
+          title="Mostrar solo cultivos sanos"
+        />
+        <KpiCard
+          icon={IcoTriangle}
+          value={stats.sick}
+          label="Con enfermedad"
+          series={stats.seriesSick}
+          tone="red"
+          active={estado === 'Con enfermedad'}
+          onClick={() => setEstado(estado === 'Con enfermedad' ? 'todos' : 'Con enfermedad')}
+          title="Mostrar solo análisis con enfermedad"
+        />
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <SearchInput value={query} onChange={setQuery} placeholder="Buscar por enfermedad, fecha o severidad…" />
+          <FiltersButton open={filtersOpen} count={activeFilters} onClick={() => setFiltersOpen((o) => !o)} />
+        </div>
+
+        {filtersOpen && (
+          <div className={`${GLASS} fade-in grid gap-5 p-4 sm:p-5 lg:grid-cols-[1fr_auto]`}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FilterGroup label="Estado">
+                {[['todos', 'Todos'], ['Sano', 'Sanos'], ['Con enfermedad', 'Con enfermedad']].map(([id, label]) => (
+                  <Pill key={id} active={estado === id} onClick={() => setEstado(id)}>{label}</Pill>
+                ))}
+              </FilterGroup>
+              <FilterGroup label="Severidad">
+                {[['todas', 'Todas'], ['Leve', 'Leve'], ['Moderada', 'Moderada'], ['Grave', 'Grave']].map(([id, label]) => (
+                  <Pill key={id} active={severity === id} onClick={() => setSeverity(id)}>{label}</Pill>
+                ))}
+              </FilterGroup>
+              <div className="sm:col-span-2">
+                <FilterGroup label="Fecha del análisis">
+                  <DateField label="Desde" value={dateFrom} onChange={setDateFrom} max={dateTo || undefined} />
+                  <DateField label="Hasta" value={dateTo} onChange={setDateTo} min={dateFrom || undefined} />
+                </FilterGroup>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-end justify-between gap-3 lg:flex-col lg:items-end">
+              <button type="button" onClick={resetFilters} className="text-sm font-semibold text-emerald-700 hover:text-emerald-800 dark:text-emerald-400">
+                Limpiar filtros
+              </button>
+              {history.length > 0 && (
+                <button type="button" onClick={clearAll} className="inline-flex items-center gap-1.5 text-sm font-semibold text-red-600 hover:text-red-700 dark:text-red-400">
+                  <IcoTrash className="h-4 w-4" /> Eliminar todo el historial
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <DiseaseChips value={disease} onChange={setDisease} allLabel="Todos" />
+          <SortSelect value={sort} onChange={setSort} options={PLANT_SORTS} />
+        </div>
+      </div>
+
+      <div ref={listRef} className="scroll-mt-24">
+        {history.length === 0 ? (
+          <EmptyState
+            icon={IcoLeaf}
+            title="Aún no hay análisis por planta"
+            text="Sube una foto de tu cultivo y el diagnóstico aparecerá aquí con su severidad y recomendaciones."
+            action={onGoAnalizar && (
+              <button type="button" onClick={() => onGoAnalizar('individual')} className={BTN.primary}>
+                <IcoScan className="h-4 w-4" /> Analizar una imagen
+              </button>
+            )}
+          />
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={IcoSearch}
+            title="Sin resultados"
+            text="No hay análisis que coincidan con la búsqueda o los filtros seleccionados."
+            action={<button type="button" onClick={resetFilters} className={BTN.secondary}>Limpiar filtros</button>}
+          />
+        ) : (
+          <ul className="space-y-3">
+            {paged.items.map((item) => (
+              <AnalysisRow key={item.id} item={item} onOpen={() => setDetailId(item.id)} menuItems={menuFor(item)} />
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <Pagination paged={paged} onPage={goToPage} />
+
+      {detailItem && (
+        <AnalysisDetail
+          item={detailItem}
+          exporting={exportingId === detailItem.id}
+          onClose={() => setDetailId(null)}
+          onExport={() => exportPdf(detailItem)}
+          onCopy={() => copySummary(detailItem)}
+          onDelete={() => removeItem(detailItem)}
+        />
+      )}
+    </div>
+  )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//    Análisis por parcela completa
+// ══════════════════════════════════════════════════════════════════════════════
+const sampleColor = (s) => (s.result ? SEVERITY_PALETTE[severityOf(s.result.target_class, s.result.confidence)] : '#94a3b8')
+
+// Silueta de la parcela (sin teselas de mapa) con sus puntos de muestreo
+function ParcelShape({ vertices, samples, className = 'h-14 w-14 sm:h-16 sm:w-16' }) {
+  const gridId = `grid${useId().replace(/:/g, '')}`
+  const shape = useMemo(() => {
+    if (!vertices?.length) return null
+    const lats = vertices.map((v) => v.lat)
+    const lngs = vertices.map((v) => v.lng)
+    const minLat = Math.min(...lats)
+    const maxLat = Math.max(...lats)
+    const minLng = Math.min(...lngs)
+    const kx = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180) // la longitud se encoge con la latitud
+    const spanX = (Math.max(...lngs) - minLng) * kx
+    const spanY = maxLat - minLat
+    const span = Math.max(spanX, spanY) || 1e-9
+    const pad = 14
+    const size = 100 - pad * 2
+    const offX = (size - (spanX / span) * size) / 2
+    const offY = (size - (spanY / span) * size) / 2
+    const project = (lat, lng) => [pad + offX + (((lng - minLng) * kx) / span) * size, pad + offY + ((maxLat - lat) / span) * size]
+    const path = `${vertices.map((v, i) => {
+      const [x, y] = project(v.lat, v.lng)
+      return `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`
+    }).join(' ')} Z`
+    const dots = (samples ?? []).filter((s) => s.result && s.coords).map((s) => {
+      const [x, y] = project(s.coords[1], s.coords[0])
+      return { x, y, color: sampleColor(s) }
+    })
+    return { path, dots }
+  }, [vertices, samples])
+
+  return (
+    <div className={`relative shrink-0 overflow-hidden rounded-xl bg-[#062a1f] ring-1 ring-emerald-500/25 ${className}`}>
+      <svg viewBox="0 0 100 100" className="h-full w-full" aria-hidden="true">
+        <defs>
+          <pattern id={gridId} width="12.5" height="12.5" patternUnits="userSpaceOnUse">
+            <path d="M12.5 0H0V12.5" fill="none" stroke="rgba(52,211,153,0.16)" strokeWidth="0.8" />
+          </pattern>
+        </defs>
+        <rect width="100" height="100" fill={`url(#${gridId})`} />
+        {shape && <path d={shape.path} fill="rgba(16,185,129,0.22)" stroke="#34d399" strokeWidth="2.5" strokeLinejoin="round" />}
+        {shape?.dots.map((d, i) => <circle key={i} cx={d.x} cy={d.y} r="4.2" fill={d.color} stroke="#062a1f" strokeWidth="1.5" />)}
+      </svg>
+    </div>
+  )
+}
+
+function ParcelRow({ summary, onOpen, menuItems }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const last = summary.lastVisit
+  const stats = last?.stats ?? null
+  const sev = stats ? lotSeverity(stats.avgAff) : null
+  const dis = visitDisease(last)
+  const prev = summary.visits[1]
+  const delta = last && prev ? Number((last.stats.avgAff - prev.stats.avgAff).toFixed(1)) : null
+  const sick = stats ? sickZones(stats) : 0
+  const description = stats
+    ? `${plural(stats.total, 'zona muestreada', 'zonas muestreadas')} · ${sick > 0 ? `${sick} con síntomas, predomina ${dis.short}` : 'sin síntomas en ninguna zona'}`
+    : 'Parcela delimitada, aún sin visitas analizadas.'
+
+  return (
+    <li className={`relative ${menuOpen ? 'z-20' : ''} ${ROW}`}>
+      <div className="flex items-center gap-3 lg:gap-4">
+        <ParcelShape vertices={summary.vertices} samples={last?.samples} />
+        <div className="min-w-0 flex-1 xl:w-56 xl:flex-none">
+          <p className="flex items-center gap-2 font-bold text-slate-900 dark:text-white">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: dis?.color ?? '#94a3b8' }} />
+            <span className="truncate">{summary.nombre}</span>
+          </p>
+          <p className="mt-1 flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+            <IcoCalendar className="h-3.5 w-3.5 shrink-0" />
+            {last ? fmtDateTime(last.fecha) : `Creada el ${fmtDate(summary.createdAt)}`}
+          </p>
+          <p className="mt-0.5 text-[11px] text-slate-400">{summary.ha} ha · {plural(summary.visits.length, 'visita', 'visitas')}</p>
+        </div>
+        <div className="hidden h-10 w-px shrink-0 bg-slate-200 xl:block dark:bg-white/10" />
+        <p className="hidden min-w-0 flex-1 text-sm leading-snug text-slate-600 xl:block dark:text-slate-300">{description}</p>
+        <div className="hidden lg:block">
+          <SeverityBadge level={sev} className="min-w-[10.5rem]" />
+        </div>
+        <AffectedValue value={stats?.avgAff ?? null} caption="promedio" delta={delta} />
+        <div className="hidden lg:block">
+          <DetailButton onClick={onOpen} />
+        </div>
+        <RowMenu items={menuItems} onOpenChange={setMenuOpen} />
+      </div>
+      <div className="mt-3 space-y-3 lg:hidden">
+        <p className="text-sm text-slate-600 dark:text-slate-300">{description}</p>
+        <div className="flex items-center justify-between gap-3">
+          <SeverityBadge level={sev} />
+          <DetailButton onClick={onOpen} />
+        </div>
+      </div>
+    </li>
+  )
+}
+
+// ── Mini mapa de una visita ───────────────────────────────────────────────────
 function makeParcelMarker(sample) {
-  const cls   = sample.result?.target_class
-  const conf  = Math.round(sample.result?.confidence ?? 0)
-  const isSano = cls === 'Fondo_y_Sana' || cls === 'Fondo'
-  const color = !cls ? '#94a3b8'
-    : isSano ? '#16a34a'
-    : SEVERITY_PALETTE[severityOf(cls, sample.result?.confidence)]
   const num = sample.label.replace('P', '')
   return L.divIcon({
     className: '',
-    html: `<div style="
-      width:22px;height:22px;border-radius:50%;background:${color};
-      border:2px solid white;box-shadow:0 2px 5px rgba(0,0,0,0.3);
-      display:flex;align-items:center;justify-content:center;
-      color:white;font-size:9px;font-weight:900;">
-      ${num}
-    </div>`,
-    iconSize: [22, 22], iconAnchor: [11, 11],
+    html: `<div style="width:22px;height:22px;border-radius:50%;background:${sampleColor(sample)};border:2px solid white;box-shadow:0 2px 5px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:white;font-size:9px;font-weight:900;">${num}</div>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
   })
 }
 
-// ── FitBounds for mini-map ────────────────────────────────────────────────────
-import { useMap } from 'react-leaflet'
 function FitBounds({ vertices }) {
   const map = useMap()
   useEffect(() => {
@@ -97,422 +1220,97 @@ function FitBounds({ vertices }) {
   return null
 }
 
-// ── ══════════════════════════════════════════════════════════════════════════ ──
-//    TAB 1 — Individual History
-// ── ══════════════════════════════════════════════════════════════════════════ ──
-function IndividualHistorial({ history, onHistoryChange }) {
-  const { isDark } = useTheme()
-  const [items, setItems]             = useState(history)
-  const [search, setSearch]           = useState('')
-  const [filterEstado, setFilterEstado] = useState('todos')
-  const [filterSeveridad, setFilterSeveridad] = useState('todos')
-  const [expanded, setExpanded]       = useState(null)
-  const [copied, setCopied]           = useState(null)
-  const [exportingIdx, setExportingIdx] = useState(null)
-
-  useEffect(() => { setItems(history) }, [history])
-
-  const filtered = useMemo(() => items.filter(i => {
-    const matchSearch = search.trim() === '' ||
-      (i.enfermedadLabel ?? i.enfermedad ?? '').toLowerCase().includes(search.trim().toLowerCase())
-    const matchEstado = filterEstado === 'todos' || i.estado === filterEstado
-    const matchSeveridad = filterSeveridad === 'todos' || i.severidad === filterSeveridad
-    return matchSearch && matchEstado && matchSeveridad
-  }), [items, search, filterEstado, filterSeveridad])
-
-  const remove = async (item) => {
-    if (!item?.id) return
-    try { await deleteAnalisis(item.id) } catch { /* ignore */ }
-    const next = items.filter(i => i.id !== item.id)
-    setItems(next)
-    if (typeof onHistoryChange === 'function') onHistoryChange(next)
-    setExpanded(null)
-  }
-
-  const clearAll = async () => {
-    if (!window.confirm('¿Eliminar todo el historial de análisis?')) return
-    await Promise.all(items.map(i => i.id ? deleteAnalisis(i.id).catch(() => null) : null))
-    setItems([])
-    if (typeof onHistoryChange === 'function') onHistoryChange([])
-    setExpanded(null)
-  }
-
-  const handleExportPDF = async (item, idx) => {
-    setExportingIdx(idx)
-    try {
-      await exportAnalisisPDF({
-        diseaseLabel:    item.enfermedadLabel ?? item.enfermedad,
-        affectedPercent: (item.confianza * 100).toFixed(1),
-        severity:        item.severidad,
-        fecha:           item.fecha,
-        originalImg:     item.imagen   ?? null,
-        xaiImg:          item.xaiImage ?? null,
-        recommendations: item.recomendaciones ? [{ body: item.recomendaciones }] : [],
-      })
-    } finally { setExportingIdx(null) }
-  }
-
-  const copy = async (item, idx) => {
-    const text = [
-      `Diagnóstico: ${item.enfermedadLabel ?? item.enfermedad}`,
-      `Severidad: ${item.severidad}`,
-      `Área afectada: ${(item.confianza * 100).toFixed(1)}%`,
-      `Fecha: ${new Date(item.fecha).toLocaleString('es-ES')}`,
-      `Recomendaciones: ${item.recomendaciones}`,
-    ].join('\n')
-    await navigator.clipboard.writeText(text)
-    setCopied(idx)
-    setTimeout(() => setCopied(null), 2000)
-  }
-
-  const total    = items.length
-  const sanos    = items.filter(i => i.estado === 'Sano').length
-  const enfermos = items.filter(i => i.estado === 'Con enfermedad').length
-
+function SampleResult({ sample }) {
+  if (!sample?.result) return <span className="text-slate-300 dark:text-slate-600">—</span>
+  const meta = diseaseMeta(sample.result.target_class)
   return (
-    <div className="space-y-5">
-      {/* Stats */}
-      {total > 0 && (
-        <div className="grid grid-cols-3 gap-4">
-          {[
-            { label: 'Total análisis',  value: total,    color: isDark ? '#e2e8f0' : '#0f172a' },
-            { label: 'Cultivos sanos',  value: sanos,    color: '#15803d' },
-            { label: 'Con enfermedad',  value: enfermos, color: '#b91c1c' },
-          ].map((s, i) => (
-            <div key={i} className={`rounded-2xl border p-5 shadow-sm text-center ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-              <p className="text-3xl font-black" style={{ color: s.color }}>{s.value}</p>
-              <p className={`text-sm mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{s.label}</p>
-            </div>
-          ))}
-        </div>
-      )}
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+      <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: sampleColor(sample) }} />
+      <span className="text-slate-600 dark:text-slate-300">{meta.short}</span>
+      <span className="font-extrabold text-slate-900 dark:text-white">{fmtPct(sample.result.confidence)}</span>
+    </span>
+  )
+}
 
-      {/* Controls */}
-      <div className={`rounded-2xl border shadow-sm p-4 space-y-3 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-        <div className="relative">
-          <svg viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none">
-            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-          </svg>
-          <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Buscar por enfermedad…"
-            className={`w-full rounded-xl border pl-10 pr-4 py-2.5 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition ${isDark ? 'bg-[#0e1929] border-[#1e3048] text-slate-200 placeholder:text-slate-600' : 'bg-slate-50 border-slate-200 text-slate-800'}`}
-          />
-          {search && (
-            <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3.5 h-3.5"><path d="M6 18L18 6M6 6l12 12"/></svg>
-            </button>
-          )}
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-semibold text-slate-400 mr-1">Estado:</span>
-          {[{ id: 'todos', label: 'Todos' }, { id: 'Sano', label: 'Sanos' }, { id: 'Con enfermedad', label: 'Con enfermedad' }].map(f => (
-            <button key={f.id} onClick={() => setFilterEstado(f.id)}
-              className="rounded-full px-3 py-1.5 text-xs font-semibold transition-all"
-              style={filterEstado === f.id
-                ? { background: '#15803d', color: 'white' }
-                : { background: isDark ? '#0e1929' : '#f8fafc', border: `1px solid ${isDark ? '#1e3048' : '#e2e8f0'}`, color: isDark ? '#94a3b8' : '#64748b' }
-              }>{f.label}</button>
-          ))}
-          <span className="text-xs font-semibold text-slate-400 ml-3 mr-1">Severidad:</span>
-          {[{ id: 'todos', label: 'Todos' }, { id: 'Grave', label: 'Grave' }, { id: 'Moderada', label: 'Moderada' }, { id: 'Leve', label: 'Leve' }].map(f => (
-            <button key={f.id} onClick={() => setFilterSeveridad(f.id)}
-              className="rounded-full px-3 py-1.5 text-xs font-semibold transition-all"
-              style={filterSeveridad === f.id
-                ? { background: '#7c3aed', color: 'white' }
-                : { background: isDark ? '#0e1929' : '#f8fafc', border: `1px solid ${isDark ? '#1e3048' : '#e2e8f0'}`, color: isDark ? '#94a3b8' : '#64748b' }
-              }>{f.label}</button>
-          ))}
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-xs text-slate-400">{filtered.length} resultado{filtered.length !== 1 ? 's' : ''}</span>
-            {total > 0 && (
-              <button onClick={clearAll}
-                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold transition-all"
-                style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c' }}>
-                <IcoTrash />Limpiar todo
-              </button>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Empty */}
-      {filtered.length === 0 && (
-        <div className={`rounded-2xl border-2 border-dashed p-16 text-center ${isDark ? 'border-slate-700 bg-[#162032]' : 'border-slate-200 bg-white'}`}>
-          <div className={`mx-auto mb-4 w-16 h-16 rounded-2xl flex items-center justify-center ${isDark ? 'bg-slate-800 border border-slate-700' : 'bg-slate-50 border border-slate-200'}`}>
-            <IcoClock />
-          </div>
-          <p className={`font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Sin registros</p>
-          <p className={`text-sm mt-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
-            {total === 0 ? 'Analiza un cultivo para ver el historial aquí' : 'No hay análisis con el filtro seleccionado'}
+function VisitCard({ record, onDelete }) {
+  const [open, setOpen] = useState(false)
+  const { fecha, stats, samples, vertices } = record
+  const sev = lotSeverity(stats.avgAff)
+  const dis = visitDisease(record)
+  const sick = sickZones(stats)
+  return (
+    <div className={ROW}>
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-3 text-left">
+        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-300">
+          <IcoCalendar className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="font-bold text-slate-900 dark:text-white">{fmtDateTime(fecha)}</p>
+          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+            {plural(stats.total, 'muestra', 'muestras')} · {sick > 0 ? `${sick} con síntomas, predomina ${dis.short}` : 'sin síntomas'}
           </p>
         </div>
-      )}
-
-      {/* Cards */}
-      <div className="space-y-3">
-        {filtered.map((item, idx) => {
-          const r    = SEVERITY_STYLES[item.severidad] ?? SEVERITY_STYLES.Leve
-          const open = expanded === idx
-          return (
-            <div key={idx} className="rounded-2xl overflow-hidden transition-shadow hover:shadow-md"
-              style={{ background: r.bg, border: `1px solid ${r.border}` }}>
-              <button onClick={() => setExpanded(open ? null : idx)}
-                className="w-full text-left px-5 py-4 hover:bg-black/[0.018] transition">
-                <div className="flex items-center gap-4">
-                  {item.imagen && (
-                    <img src={item.imagen} alt="" className="w-14 h-14 rounded-xl object-cover border-2 border-white shadow-sm flex-shrink-0" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: r.dot }}/>
-                      <p className="font-bold text-slate-900 truncate">{item.enfermedadLabel ?? item.enfermedad}</p>
-                    </div>
-                    <p className="text-xs text-slate-500">
-                      {new Date(item.fecha).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
-                      {' · '}
-                      {new Date(item.fecha).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-3 flex-shrink-0">
-                    <span className="hidden sm:inline-flex rounded-full px-3 py-1 text-xs font-bold"
-                      style={{ background: r.badge, color: r.text }}>{item.severidad === 'Sano' ? 'Sano' : `Severidad ${item.severidad}`}</span>
-                    <span className="text-sm font-bold text-slate-600 tabular-nums">{(item.confianza * 100).toFixed(0)}%</span>
-                    <IcoChevron open={open}/>
-                  </div>
-                </div>
-              </button>
-
-              {open && (
-                <div className="border-t px-5 py-5 space-y-4 fade-in"
-                  style={{ background: 'rgba(255,255,255,0.58)', borderColor: r.border }}>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    {[
-                      { label: 'Cultivo',        value: item.cultivo || 'Maíz' },
-                      { label: 'Área afectada',  value: `${(item.confianza * 100).toFixed(1)}%` },
-                      { label: 'Severidad',      value: item.severidad },
-                      { label: 'Estado',         value: item.estado },
-                    ].map((d, i) => (
-                      <div key={i} className="rounded-xl bg-white border border-slate-200 p-3">
-                        <p className="text-[10px] text-slate-400 uppercase tracking-wider font-semibold">{d.label}</p>
-                        <p className="font-bold text-slate-900 mt-1 text-sm">{d.value}</p>
-                      </div>
-                    ))}
-                  </div>
-                  {item.recomendaciones && (
-                    <div className="rounded-xl bg-white border border-slate-200 p-4">
-                      <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Recomendaciones</p>
-                      <p className="text-sm text-slate-700 leading-relaxed">{item.recomendaciones}</p>
-                    </div>
-                  )}
-                  <div className="flex gap-2 flex-wrap">
-                    <button onClick={() => copy(item, idx)}
-                      className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition flex items-center justify-center gap-2">
-                      {copied === idx ? <IcoCheck /> : <IcoCopy />}
-                      {copied === idx ? '¡Copiado!' : 'Copiar'}
-                    </button>
-                    <button onClick={() => handleExportPDF(item, idx)} disabled={exportingIdx === idx}
-                      className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition flex items-center justify-center gap-2 disabled:opacity-60">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" className="w-4 h-4 flex-shrink-0">
-                        <path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
-                        <path d="M14 3v5a1 1 0 001 1h5M9 17v-5m0 0h6m-6 0l3-3m0 0l3 3"/>
-                      </svg>
-                      {exportingIdx === idx ? 'Generando…' : 'PDF'}
-                    </button>
-                    <button onClick={() => remove(item)}
-                      className="flex-1 rounded-xl px-4 py-2.5 text-sm font-semibold transition flex items-center justify-center gap-2"
-                      style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c' }}>
-                      <IcoTrash />Eliminar
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-// ── ══════════════════════════════════════════════════════════════════════════ ──
-//    TAB 2 — Parcel History
-// ── ══════════════════════════════════════════════════════════════════════════ ──
-function ParcelCard({ record, isDark, onDelete }) {
-  const [open, setOpen] = useState(false)
-
-  const { ha, fecha, stats, samples, vertices } = record
-  const dominant     = stats.dominant
-  const domLabel     = DISEASE_LABELS[dominant] ?? (dominant ? dominant : 'Sano')
-  const domColor     = dominant ? (DISEASE_COLORS[dominant] ?? '#94a3b8') : '#22c55e'
-  const sevLabel     = lotSeverity(stats.avgAff)
-  const sevColor     = SEVERITY_PALETTE[sevLabel]
-
-  const cardBg     = isDark ? '#162032' : 'white'
-  const cardBorder = isDark ? '#1e3048' : '#e2e8f0'
-
-  return (
-    <div className="rounded-2xl overflow-hidden shadow-sm transition-shadow hover:shadow-md"
-      style={{ background: cardBg, border: `1px solid ${cardBorder}` }}>
-
-      {/* Header */}
-      <button onClick={() => setOpen(o => !o)}
-        className="w-full text-left px-5 py-4 hover:bg-black/[0.018] transition">
-        <div className="flex items-center gap-4">
-
-          {/* Satellite icon */}
-          <div className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 text-2xl"
-            style={{ background: isDark ? '#0e1929' : '#f1f5f9', border: `1px solid ${cardBorder}` }}>
-            🛰️
-          </div>
-
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: domColor }} />
-              <p className={`font-bold truncate ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-                Parcela — {ha} ha · {domLabel}
-              </p>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: sevColor }}>
-                {sevLabel}
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 mt-0.5">
-              {new Date(fecha).toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
-              {' · '}
-              {new Date(fecha).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <div className="text-right hidden sm:block">
-              <p className="text-xs text-slate-400">{stats.total} muestras</p>
-              <p className="text-sm font-black" style={{ color: sevColor }}>{stats.avgAff}% prom.</p>
-            </div>
-            <IcoChevron open={open} />
-          </div>
+        <div className="hidden sm:block">
+          <SeverityBadge level={sev} />
         </div>
+        <span className="w-14 text-right text-lg font-extrabold tabular-nums text-slate-900 dark:text-white">{fmtPct(stats.avgAff)}</span>
+        <IcoChevronDown className={`h-5 w-5 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
 
-      {/* Expanded */}
       {open && (
-        <div className={`border-t px-5 py-5 space-y-4 fade-in ${isDark ? 'border-[#1e3048]' : 'border-slate-100'}`}>
-
-          {/* KPIs */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {[
-              { label: 'Área',           value: `${ha} ha`,           color: '#7c3aed' },
-              { label: 'Muestras',       value: stats.total,           color: '#64748b' },
-              { label: 'Zonas sanas',    value: stats.healthy,         color: '#16a34a' },
-              { label: 'Afectación',     value: `${stats.avgAff}%`,    color: sevColor  },
-            ].map(k => (
-              <div key={k.label} className={`rounded-xl border p-3 text-center ${isDark ? 'bg-[#0e1929] border-[#1e3048]' : 'bg-slate-50 border-slate-200'}`}>
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{k.label}</p>
-                <p className="text-lg font-black mt-0.5" style={{ color: k.color }}>{k.value}</p>
-              </div>
-            ))}
+        <div className="fade-in mt-3 grid gap-4 border-t border-slate-100 pt-4 lg:grid-cols-[16rem_1fr] dark:border-white/10">
+          <div className="overflow-hidden rounded-2xl border border-slate-200 dark:border-white/10" style={{ height: 220 }}>
+            <MapContainer
+              center={[vertices[0].lat, vertices[0].lng]}
+              zoom={15}
+              style={{ height: '100%', width: '100%' }}
+              zoomControl={false}
+              dragging={false}
+              scrollWheelZoom={false}
+              doubleClickZoom={false}
+              touchZoom={false}
+            >
+              <TileLayer attribution="&copy; Esri" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" />
+              <FitBounds vertices={vertices} />
+              <Polygon positions={vertices} pathOptions={{ color: '#34d399', fillColor: '#10b981', fillOpacity: 0.15, weight: 2 }} />
+              {samples.filter((s) => s.result).map((s) => (
+                <Marker key={s.id} position={[s.coords[1], s.coords[0]]} icon={makeParcelMarker(s)}>
+                  <Tooltip direction="top" offset={[0, -14]}>
+                    <span className="text-[10px] font-bold">{s.label} — {diseaseMeta(s.result.target_class).short} {fmtPct(s.result.confidence)}</span>
+                  </Tooltip>
+                </Marker>
+              ))}
+            </MapContainer>
           </div>
 
-          {/* Mini-map + table side by side */}
-          <div className="flex flex-col lg:flex-row gap-4">
-
-            {/* Mini-map */}
-            <div className={`w-full lg:w-64 flex-shrink-0 rounded-xl overflow-hidden border ${isDark ? 'border-[#1e3048]' : 'border-slate-200'}`}>
-              <div className={`px-3 py-2 border-b text-xs font-bold flex items-center gap-1.5 ${isDark ? 'bg-[#0e1929] border-[#1e3048] text-slate-400' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
-                <span>🗺️</span> Mapa del lote
-              </div>
-              <div style={{ height: 220 }}>
-                <MapContainer
-                  center={[vertices[0].lat, vertices[0].lng]}
-                  zoom={15}
-                  style={{ height: '100%', width: '100%' }}
-                  zoomControl={false}
-                  dragging={false}
-                  scrollWheelZoom={false}
-                  doubleClickZoom={false}
-                  touchZoom={false}
-                >
-                  <TileLayer attribution='&copy; Esri'
-                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" />
-                  <FitBounds vertices={vertices} />
-                  <Polygon positions={vertices}
-                    pathOptions={{ color: '#7c3aed', fillColor: '#7c3aed', fillOpacity: 0.12, weight: 2 }} />
-                  {samples.filter(s => s.result).map(s => {
-                    const [lng, lat] = s.coords
-                    return (
-                      <Marker key={s.id} position={[lat, lng]} icon={makeParcelMarker(s)}>
-                        <Tooltip direction="top" offset={[0, -14]}>
-                          <span className="text-[10px] font-bold">
-                            {s.label} — {DISEASE_LABELS[s.result?.target_class] ?? '?'} {Math.round(s.result?.confidence ?? 0)}%
-                          </span>
-                        </Tooltip>
-                      </Marker>
-                    )
-                  })}
-                </MapContainer>
-              </div>
-              {/* Legend */}
-              <div className={`px-3 py-1.5 border-t flex flex-wrap gap-x-2 gap-y-0.5 ${isDark ? 'border-[#1e3048] bg-[#0e1929]' : 'border-slate-100 bg-slate-50'}`}>
-                {[['#16a34a','Sano'],['#65a30d','Leve'],['#d97706','Mod.'],['#dc2626','Grave']].map(([c, l]) => (
-                  <div key={l} className="flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full" style={{ background: c }} />
-                    <span className="text-[9px] text-slate-500">{l}</span>
-                  </div>
+          <div className="overflow-x-auto rounded-2xl border border-slate-100 dark:border-white/10">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-slate-400">
+                  <th className="px-4 py-2.5 font-semibold">Zona</th>
+                  <th className="px-4 py-2.5 font-semibold">Diagnóstico</th>
+                  <th className="px-4 py-2.5 font-semibold">Severidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {samples.map((s) => (
+                  <tr key={s.id} className="border-t border-slate-100 dark:border-white/5">
+                    <td className="px-4 py-2 font-bold text-slate-700 dark:text-slate-200">{s.label}</td>
+                    <td className="px-4 py-2"><SampleResult sample={s} /></td>
+                    <td className="px-4 py-2">
+                      {s.result
+                        ? <span className="font-semibold" style={{ color: sampleColor(s) }}>{severityOf(s.result.target_class, s.result.confidence)}</span>
+                        : <span className="text-slate-300 dark:text-slate-600">—</span>}
+                    </td>
+                  </tr>
                 ))}
-              </div>
-            </div>
-
-            {/* Results table */}
-            <div className={`flex-1 rounded-xl border overflow-hidden ${isDark ? 'border-[#1e3048]' : 'border-slate-200'}`}>
-              <div className={`px-3 py-2 border-b text-xs font-bold ${isDark ? 'bg-[#0e1929] border-[#1e3048] text-slate-400' : 'bg-slate-50 border-slate-100 text-slate-500'}`}>
-                Resultados por zona
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className={isDark ? 'text-slate-500 bg-[#0e1929]' : 'text-slate-400 bg-white'}>
-                      <th className="px-3 py-2 text-left font-semibold">Zona</th>
-                      <th className="px-3 py-2 text-left font-semibold">Diagnóstico</th>
-                      <th className="px-3 py-2 text-left font-semibold">Afectado</th>
-                      <th className="px-3 py-2 text-left font-semibold">Severidad</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {samples.map((s, i) => {
-                      const cls  = s.result?.target_class
-                      const conf = Math.round(s.result?.confidence ?? 0)
-                      const isSano = cls === 'Fondo_y_Sana' || cls === 'Fondo'
-                      const sev  = !cls ? '—' : severityOf(cls, s.result?.confidence)
-                      const sc   = { Sano: '#16a34a', Leve: '#65a30d', Moderada: '#d97706', Grave: '#dc2626', '—': '#94a3b8' }
-                      return (
-                        <tr key={s.id} className={`border-t ${isDark ? 'border-slate-800 text-slate-300' : 'border-slate-100 text-slate-700'} ${i % 2 ? isDark ? 'bg-slate-800/20' : 'bg-slate-50/50' : ''}`}>
-                          <td className="px-3 py-2 font-bold">{s.label}</td>
-                          <td className="px-3 py-2">
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-1.5 h-1.5 rounded-full" style={{ background: DISEASE_COLORS[cls] ?? '#94a3b8' }} />
-                              {s.status === 'done' ? (DISEASE_LABELS[cls] ?? cls) : '—'}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 font-black" style={{ color: DISEASE_COLORS[cls] ?? '#94a3b8' }}>
-                            {s.status === 'done' ? `${conf}%` : '—'}
-                          </td>
-                          <td className="px-3 py-2">
-                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold text-white" style={{ background: sc[sev] }}>{sev}</span>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+              </tbody>
+            </table>
           </div>
 
-          {/* Actions */}
-          <div className="flex justify-end">
-            <button onClick={() => onDelete(record.id)}
-              className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition"
-              style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c' }}>
-              <IcoTrash />Eliminar registro
+          <div className="flex justify-end lg:col-span-2">
+            <button type="button" onClick={onDelete} className={BTN.danger}>
+              <IcoTrash className="h-4 w-4" /> Eliminar visita
             </button>
           </div>
         </div>
@@ -521,348 +1319,440 @@ function ParcelCard({ record, isDark, onDelete }) {
   )
 }
 
-function ParcelaSummaryCard({ summary, isDark, onClick }) {
-  const { nombre, ha, visits, lastVisit } = summary
-  const stats = lastVisit?.stats ?? { dominant: null, avgAff: 0, total: 0 }
-  const domLabel = stats.dominant ? (DISEASE_LABELS[stats.dominant] ?? stats.dominant) : 'Sano'
-  const domColor = stats.dominant ? (DISEASE_COLORS[stats.dominant] ?? '#94a3b8') : '#22c55e'
-  const sevLabel = lotSeverity(stats.avgAff)
-  const sevColor = SEVERITY_PALETTE[sevLabel]
-
-  const prev = visits[1]
-  const delta = lastVisit && prev ? parseFloat((lastVisit.stats.avgAff - prev.stats.avgAff).toFixed(1)) : null
-
-  return (
-    <button onClick={onClick}
-      className={`text-left rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-all p-4 ${isDark ? 'bg-[#162032] border border-[#1e3048]' : 'bg-white border border-slate-200'}`}>
-      <div className="flex items-center justify-between mb-2">
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl" style={{ background: isDark ? '#0e1929' : '#f1f5f9' }}>🛰️</div>
-        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: sevColor }}>{sevLabel}</span>
-      </div>
-      <p className={`font-bold text-sm truncate ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{nombre}</p>
-      <p className="text-xs text-slate-400 mt-0.5">{ha} ha · {visits.length} visita{visits.length !== 1 ? 's' : ''}</p>
-      <div className="flex items-center gap-1.5 mt-2">
-        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: domColor }} />
-        <span className={`text-xs font-semibold truncate ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{domLabel}</span>
-      </div>
-      <div className={`flex items-center justify-between mt-3 pt-3 border-t text-[11px] ${isDark ? 'border-[#1e3048] text-slate-500' : 'border-slate-100 text-slate-400'}`}>
-        <span>{lastVisit ? new Date(lastVisit.fecha).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Sin visitas'}</span>
-        {delta != null && (
-          <span className="font-bold" style={{ color: delta < 0 ? '#16a34a' : delta > 0 ? '#dc2626' : '#94a3b8' }}>
-            {delta === 0 ? '—' : `${delta < 0 ? '▼' : '▲'} ${Math.abs(delta)}%`}
-          </span>
-        )}
-      </div>
-    </button>
-  )
-}
-
-// ── Trend line chart (SVG) ─────────────────────────────────────────────────────
 function TrendLineChart({ visits }) {
-  const w = 560, h = 160, pad = 28
-  const chrono = [...visits].reverse() // visits vienen más reciente primero → invertir para orden cronológico
-  const max = Math.max(...chrono.map(v => v.stats.avgAff), 10)
+  const gradId = `trend${useId().replace(/:/g, '')}`
+  const w = 560
+  const h = 180
+  const left = 34
+  const right = 14
+  const top = 14
+  const bottom = 28
+  const chrono = [...visits].reverse()
   const n = chrono.length
-
-  const pointX = (i) => n <= 1 ? w / 2 : pad + (i / (n - 1)) * (w - pad * 2)
-  const pointY = (v) => h - pad - (v / max) * (h - pad * 2)
-
-  const pathD = chrono.map((v, i) => `${i === 0 ? 'M' : 'L'} ${pointX(i)} ${pointY(v.stats.avgAff)}`).join(' ')
-  const areaD = `${pathD} L ${pointX(n - 1)} ${h - pad} L ${pointX(0)} ${h - pad} Z`
-
+  const max = Math.max(...chrono.map((v) => v.stats.avgAff), SEVERITY_LIMITS.grave + 5)
+  const x = (i) => (n <= 1 ? (left + w - right) / 2 : left + (i / (n - 1)) * (w - left - right))
+  const y = (v) => top + (1 - v / max) * (h - top - bottom)
+  const line = chrono.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v.stats.avgAff).toFixed(1)}`).join(' ')
+  const area = `${line} L${x(n - 1).toFixed(1)} ${h - bottom} L${x(0).toFixed(1)} ${h - bottom} Z`
   return (
-    <svg width="100%" viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible' }}>
+    <svg viewBox={`0 0 ${w} ${h}`} className="h-auto w-full" role="img" aria-label="Evolución de la afectación promedio por visita">
       <defs>
-        <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#7c3aed" stopOpacity="0.25"/>
-          <stop offset="100%" stopColor="#7c3aed" stopOpacity="0"/>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#10b981" stopOpacity="0.28" />
+          <stop offset="100%" stopColor="#10b981" stopOpacity="0" />
         </linearGradient>
       </defs>
-      {[0, 0.5, 1].map(f => (
-        <line key={f} x1={pad} x2={w - pad} y1={pad + f * (h - pad * 2)} y2={pad + f * (h - pad * 2)} stroke="#e2e8f0" strokeWidth="1" />
+      {[SEVERITY_LIMITS.moderada, SEVERITY_LIMITS.grave].map((t) => (
+        <g key={t}>
+          <line x1={left} x2={w - right} y1={y(t)} y2={y(t)} strokeDasharray="4 4" className="stroke-slate-300 dark:stroke-white/15" />
+          <text x={left - 6} y={y(t) + 3} textAnchor="end" className="fill-slate-400" style={{ fontSize: 9, fontWeight: 600 }}>{t}%</text>
+        </g>
       ))}
-      {n > 1 && <path d={areaD} fill="url(#trend-fill)" stroke="none" />}
-      <path d={pathD} fill="none" stroke="#7c3aed" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
-      {chrono.map((v, i) => {
-        const sev = SEVERITY_PALETTE[lotSeverity(v.stats.avgAff)]
-        return (
-          <g key={v.id}>
-            <circle cx={pointX(i)} cy={pointY(v.stats.avgAff)} r={4.5} fill={sev} stroke="white" strokeWidth="2" />
-            <text x={pointX(i)} y={h - 6} textAnchor="middle" style={{ fontSize: 9, fill: '#94a3b8', fontWeight: 600 }}>
-              {new Date(v.fecha).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
-            </text>
-          </g>
-        )
-      })}
+      <line x1={left} x2={w - right} y1={h - bottom} y2={h - bottom} className="stroke-slate-200 dark:stroke-white/10" />
+      {n > 1 && <path d={area} fill={`url(#${gradId})`} />}
+      <path d={line} fill="none" stroke="#10b981" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+      {chrono.map((v, i) => (
+        <g key={v.id}>
+          <circle cx={x(i)} cy={y(v.stats.avgAff)} r="5" fill={SEVERITY_PALETTE[lotSeverity(v.stats.avgAff)]} strokeWidth="2" className="stroke-white dark:stroke-[#0d1726]" />
+          <text x={x(i)} y={h - 9} textAnchor="middle" className="fill-slate-400" style={{ fontSize: 9, fontWeight: 600 }}>
+            {new Date(v.fecha).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
+          </text>
+        </g>
+      ))}
     </svg>
   )
 }
 
-// ── Dashboard de una parcela: tendencia, comparación por zona, visitas ────────
-function ParcelaDashboard({ summary, isDark, onBack, onChanged, onAnalizarDeNuevo }) {
+function ParcelaDashboard({ summary, onBack, onChanged, onAnalizarDeNuevo, confirm, toast }) {
   const { visits } = summary
   const [renaming, setRenaming] = useState(false)
-  const [nombre, setNombre]     = useState(summary.nombre)
-
   const chrono = [...visits].reverse()
   const last = visits[0]
   const prev = visits[1]
-  const delta = last && prev ? parseFloat((last.stats.avgAff - prev.stats.avgAff).toFixed(1)) : null
+  const delta = last && prev ? Number((last.stats.avgAff - prev.stats.avgAff).toFixed(1)) : null
+  const sev = last ? lotSeverity(last.stats.avgAff) : null
+  const zoneRows = (last?.samples ?? []).map((s) => ({
+    label: s.label,
+    cells: chrono.map((v) => v.samples.find((x) => x.label === s.label) ?? null),
+  }))
 
-  const confirmRename = () => {
-    const trimmed = nombre.trim()
-    if (trimmed && trimmed !== summary.nombre) renameParcela(summary.id, trimmed)
+  const saveName = (nombre) => {
+    renameParcela(summary.id, nombre)
     setRenaming(false)
     onChanged()
+    toast('Parcela renombrada')
   }
 
-  const deleteThisParcela = () => {
-    if (!window.confirm(`¿Eliminar la parcela "${summary.nombre}" y sus ${visits.length} visita${visits.length !== 1 ? 's' : ''}? Esta acción no se puede deshacer.`)) return
+  const removeParcela = async () => {
+    const ok = await confirm({
+      title: `¿Eliminar "${summary.nombre}"?`,
+      message: `Se borrarán la parcela y sus ${plural(visits.length, 'visita', 'visitas')}. Esta acción no se puede deshacer.`,
+    })
+    if (!ok) return
     deleteParcela(summary.id)
     onChanged()
     onBack()
+    toast('Parcela eliminada')
   }
 
-  const deleteVisit = (id) => {
-    if (!window.confirm('¿Eliminar esta visita?')) return
-    deleteParcelVisit(id)
+  const removeVisit = async (visit) => {
+    const ok = await confirm({
+      title: '¿Eliminar esta visita?',
+      message: `Se borrará la visita del ${fmtDate(visit.fecha)}. Esta acción no se puede deshacer.`,
+    })
+    if (!ok) return
+    deleteParcelVisit(visit.id)
     onChanged()
+    toast('Visita eliminada')
   }
 
-  const zoneLabels = last ? last.samples.map(s => s.label) : []
-  const zoneRows = zoneLabels.map(label => ({
-    label,
-    cells: chrono.map(v => v.samples.find(s => s.label === label) ?? null),
-  }))
+  const deltaText = delta == null ? '—' : delta === 0 ? 'Sin cambio' : `${delta > 0 ? '▲' : '▼'} ${Math.abs(delta)} pts`
+  const deltaClass = delta > 0 ? 'text-red-600 dark:text-red-400' : delta < 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white'
 
   return (
-    <div className="space-y-5 fade-in">
-      <button onClick={onBack} className={`text-xs font-semibold transition ${isDark ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-800'}`}>
-        ← Todas las parcelas
+    <div className="fade-in space-y-5">
+      <button type="button" onClick={onBack} className="inline-flex items-center gap-1 text-sm font-semibold text-slate-500 transition hover:text-emerald-700 dark:text-slate-400 dark:hover:text-emerald-300">
+        <IcoChevronLeft className="h-4 w-4" /> Todas las parcelas
       </button>
 
-      {/* Header */}
-      <div className={`rounded-2xl border shadow-sm p-5 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div className="flex-1 min-w-[200px]">
-            {renaming ? (
-              <div className="flex items-center gap-2 flex-wrap">
-                <input autoFocus value={nombre} onChange={e => setNombre(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && confirmRename()}
-                  className="rounded-lg border border-slate-200 px-3 py-1.5 text-lg font-black outline-none focus:border-violet-400" />
-                <button onClick={confirmRename} className="text-xs font-bold text-emerald-600">Guardar</button>
-                <button onClick={() => { setRenaming(false); setNombre(summary.nombre) }} className="text-xs font-semibold text-slate-400">Cancelar</button>
-              </div>
-            ) : (
-              <button onClick={() => setRenaming(true)} className="group flex items-center gap-2">
-                <h2 className={`text-lg font-black ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{summary.nombre}</h2>
-                <span className="text-[10px] text-slate-400 opacity-0 group-hover:opacity-100 transition">✎ renombrar</span>
+      <section className={`${GLASS} p-5 sm:p-6`}>
+        <div className="flex flex-wrap items-center gap-4">
+          <ParcelShape vertices={summary.vertices} samples={last?.samples} className="h-20 w-20" />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h2 className="truncate text-xl font-extrabold text-slate-900 dark:text-white">{summary.nombre}</h2>
+              <button type="button" aria-label="Renombrar parcela" onClick={() => setRenaming(true)} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-white/10 dark:hover:text-slate-200">
+                <IcoPencil className="h-4 w-4" />
               </button>
-            )}
-            <p className="text-xs text-slate-400 mt-1">{summary.ha} ha · {summary.sampleCount} puntos de muestreo · {visits.length} visita{visits.length !== 1 ? 's' : ''}</p>
+            </div>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              {summary.ha} ha · {plural(summary.sampleCount, 'punto de muestreo', 'puntos de muestreo')} · {plural(visits.length, 'visita', 'visitas')}
+            </p>
           </div>
-          <div className="flex gap-2 flex-shrink-0">
-            <button onClick={onAnalizarDeNuevo}
-              className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold text-white transition"
-              style={{ background: 'linear-gradient(135deg,#7c3aed,#6d28d9)' }}>
-              🛰️ Analizar de nuevo
+          <div className="flex gap-2">
+            <button type="button" onClick={onAnalizarDeNuevo} className={BTN.primary}>
+              <IcoScan className="h-4 w-4" /> Analizar de nuevo
             </button>
-            <button onClick={deleteThisParcela}
-              className="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold transition"
-              style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c' }}>
-              <IcoTrash />
+            <button type="button" aria-label="Eliminar parcela" onClick={removeParcela} className={`${BTN.danger} px-3`}>
+              <IcoTrash className="h-4 w-4" />
             </button>
           </div>
         </div>
-      </div>
+
+        {last && (
+          <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Metric label="Afectación actual" value={fmtPct(last.stats.avgAff)} />
+            <Metric label="Severidad" value={sev} />
+            <Metric label="Cambio vs. anterior" value={deltaText} valueClass={deltaClass} />
+            <Metric label="Zonas con síntomas" value={`${sickZones(last.stats)} / ${last.stats.total}`} />
+          </div>
+        )}
+      </section>
 
       {visits.length === 0 ? (
-        <div className={`rounded-2xl border-2 border-dashed p-16 text-center ${isDark ? 'border-slate-700 bg-[#162032]' : 'border-slate-200 bg-white'}`}>
-          <p className={`font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Todavía no hay visitas registradas</p>
-        </div>
+        <EmptyState
+          icon={IcoMap}
+          title="Todavía no hay visitas registradas"
+          text="Analiza las zonas de muestreo de esta parcela para ver aquí su evolución."
+          action={<button type="button" onClick={onAnalizarDeNuevo} className={BTN.primary}><IcoScan className="h-4 w-4" /> Analizar parcela</button>}
+        />
       ) : (
         <>
-          {/* Tendencia + delta */}
-          <div className={`rounded-2xl border shadow-sm p-5 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Evolución de la afectación promedio</p>
+          <section className={`${GLASS} p-5 sm:p-6`}>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Evolución de la afectación promedio</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Las líneas punteadas marcan los umbrales de severidad moderada y grave</p>
+              </div>
               {delta != null && (
-                <span className="text-xs font-bold px-2.5 py-1 rounded-full"
-                  style={{
-                    background: delta < 0 ? '#f0fdf4' : delta > 0 ? '#fef2f2' : '#f8fafc',
-                    color:      delta < 0 ? '#15803d' : delta > 0 ? '#b91c1c' : '#64748b',
-                  }}>
+                <span className={`rounded-full px-3 py-1 text-xs font-bold ${
+                  delta < 0 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-300'
+                    : delta > 0 ? 'bg-red-50 text-red-700 dark:bg-red-400/10 dark:text-red-300'
+                      : 'bg-slate-100 text-slate-600 dark:bg-white/10 dark:text-slate-300'
+                }`}
+                >
                   {delta === 0 ? 'Sin cambio vs. visita anterior' : `${delta < 0 ? 'Mejoró' : 'Empeoró'} ${Math.abs(delta)} pts vs. visita anterior`}
                 </span>
               )}
             </div>
             <TrendLineChart visits={visits} />
-          </div>
+          </section>
 
-          {/* Comparación por zona */}
           {chrono.length > 1 && (
-            <div className={`rounded-2xl border overflow-hidden ${isDark ? 'border-[#1e3048]' : 'border-slate-200'}`}>
-              <div className={`px-4 py-3 border-b font-bold text-sm ${isDark ? 'bg-slate-800 border-[#1e3048] text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
-                Comparación por zona
+            <section className={`${GLASS} overflow-hidden`}>
+              <div className="border-b border-slate-100 px-5 py-4 dark:border-white/10">
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">Comparación por zona</h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400">Cómo cambió cada punto de muestreo entre visitas</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
-                    <tr className={isDark ? 'bg-slate-900 text-slate-400' : 'bg-white text-slate-400'}>
-                      <th className="px-4 py-2.5 text-left font-semibold">Zona</th>
-                      {chrono.map(v => (
-                        <th key={v.id} className="px-4 py-2.5 text-left font-semibold whitespace-nowrap">
-                          {new Date(v.fecha).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}
-                        </th>
-                      ))}
+                    <tr className="text-left text-slate-400">
+                      <th className="px-5 py-3 font-semibold">Zona</th>
+                      {chrono.map((v) => <th key={v.id} className="whitespace-nowrap px-4 py-3 font-semibold">{fmtDate(v.fecha)}</th>)}
                     </tr>
                   </thead>
                   <tbody>
-                    {zoneRows.map((row, i) => (
-                      <tr key={row.label} className={`border-t ${isDark ? 'border-slate-800' : 'border-slate-100'} ${i % 2 ? isDark ? 'bg-slate-800/20' : 'bg-slate-50/50' : ''}`}>
-                        <td className={`px-4 py-2.5 font-bold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{row.label}</td>
-                        {row.cells.map((cell, j) => {
-                          const cls  = cell?.result?.target_class
-                          const conf = cell?.result ? Math.round(cell.result.confidence) : null
-                          return (
-                            <td key={j} className="px-4 py-2.5">
-                              {cell?.result ? (
-                                <div className="flex items-center gap-1.5 whitespace-nowrap">
-                                  <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: DISEASE_COLORS[cls] ?? '#94a3b8' }} />
-                                  <span className={isDark ? 'text-slate-300' : 'text-slate-700'}>{DISEASE_LABELS[cls] ?? cls}</span>
-                                  <span className="font-black" style={{ color: DISEASE_COLORS[cls] ?? '#94a3b8' }}>{conf}%</span>
-                                </div>
-                              ) : <span className="text-slate-300">—</span>}
-                            </td>
-                          )
-                        })}
+                    {zoneRows.map((row) => (
+                      <tr key={row.label} className="border-t border-slate-100 dark:border-white/5">
+                        <td className="px-5 py-2.5 font-bold text-slate-700 dark:text-slate-200">{row.label}</td>
+                        {row.cells.map((cell, j) => <td key={j} className="px-4 py-2.5"><SampleResult sample={cell} /></td>)}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
-            </div>
+            </section>
           )}
 
-          {/* Timeline de visitas */}
-          <div className="space-y-3">
-            <p className={`text-xs font-semibold ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>Historial de visitas</p>
-            {visits.map(record => (
-              <ParcelCard key={record.id} record={record} isDark={isDark} onDelete={deleteVisit} />
-            ))}
-          </div>
+          <section className="space-y-3">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">Historial de visitas</h3>
+            {visits.map((v) => <VisitCard key={v.id} record={v} onDelete={() => removeVisit(v)} />)}
+          </section>
         </>
       )}
+
+      {renaming && <RenameDialog initial={summary.nombre} onCancel={() => setRenaming(false)} onSave={saveName} />}
     </div>
   )
 }
 
-function ParcelHistorial({ onGoAnalizarParcela }) {
-  const { isDark } = useTheme()
-  const [summaries, setSummaries] = useState(() => getParcelaSummaries())
+const PARCEL_SORTS = [
+  { id: 'recientes', label: 'Actividad reciente' },
+  { id: 'mayor', label: 'Mayor afectación' },
+  { id: 'nombre', label: 'Nombre (A–Z)' },
+  { id: 'hectareas', label: 'Más hectáreas' },
+]
+
+function ParcelHistory({ summaries, onChanged, onGoAnalizarParcela, onGoAnalizar, confirm, toast }) {
   const [selectedId, setSelectedId] = useState(null)
+  const [renameTarget, setRenameTarget] = useState(null)
+  const [query, setQuery] = useState('')
+  const [disease, setDisease] = useState('todos')
+  const [estado, setEstado] = useState('todas')
+  const [severity, setSeverity] = useState('todas')
+  const [sort, setSort] = useState('recientes')
+  const [filtersOpen, setFiltersOpen] = useState(false)
+  const listRef = useRef(null)
 
-  const refresh = () => setSummaries(getParcelaSummaries())
+  const stats = useMemo(() => {
+    const affected = summaries.filter((p) => p.lastVisit && lotSeverity(p.lastVisit.stats.avgAff) !== 'Sano')
+    return {
+      total: summaries.length,
+      ha: summaries.reduce((a, p) => a + (Number(p.ha) || 0), 0),
+      visits: summaries.reduce((a, p) => a + p.visits.length, 0),
+      affected: affected.length,
+      seriesVisits: weeklySeries(summaries.flatMap((p) => p.visits.map((v) => v.fecha))),
+      seriesAffected: weeklySeries(affected.map((p) => p.lastVisit.fecha)),
+    }
+  }, [summaries])
 
-  // Reload when localStorage changes (e.g. user finishes a new parcel analysis)
-  useEffect(() => {
-    window.addEventListener('storage', refresh)
-    return () => window.removeEventListener('storage', refresh)
-  }, [])
+  const filtered = useMemo(() => {
+    const q = normalize(query)
+    const list = summaries.filter((p) => {
+      const sev = p.lastVisit ? lotSeverity(p.lastVisit.stats.avgAff) : null
+      if (disease !== 'todos' && visitDisease(p.lastVisit)?.key !== disease) return false
+      if (estado === 'afectadas' && (!sev || sev === 'Sano')) return false
+      if (estado === 'sanas' && sev !== 'Sano') return false
+      if (severity !== 'todas' && sev !== severity) return false
+      return !q || normalize(p.nombre).includes(q)
+    })
+    const activity = (p) => new Date(p.lastVisit?.fecha ?? p.createdAt).getTime()
+    const avg = (p) => p.lastVisit?.stats.avgAff ?? -1
+    const sorters = {
+      recientes: (a, b) => activity(b) - activity(a),
+      mayor: (a, b) => avg(b) - avg(a) || activity(b) - activity(a),
+      nombre: (a, b) => a.nombre.localeCompare(b.nombre, 'es'),
+      hectareas: (a, b) => (Number(b.ha) || 0) - (Number(a.ha) || 0),
+    }
+    return [...list].sort(sorters[sort] ?? sorters.recientes)
+  }, [summaries, query, disease, estado, severity, sort])
 
-  const selected = selectedId ? summaries.find(s => s.id === selectedId) : null
+  const paged = usePaged(filtered, [query, disease, estado, severity, sort].join('|'))
+  const activeFilters = (estado !== 'todas') + (severity !== 'todas')
 
+  const resetFilters = () => {
+    setQuery('')
+    setDisease('todos')
+    setEstado('todas')
+    setSeverity('todas')
+  }
+
+  const goToPage = (p) => {
+    paged.setPage(p)
+    listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+
+  const removeParcela = async (p) => {
+    const ok = await confirm({
+      title: `¿Eliminar "${p.nombre}"?`,
+      message: `Se borrarán la parcela y sus ${plural(p.visits.length, 'visita', 'visitas')}. Esta acción no se puede deshacer.`,
+    })
+    if (!ok) return
+    deleteParcela(p.id)
+    onChanged()
+    toast('Parcela eliminada')
+  }
+
+  const saveName = (nombre) => {
+    renameParcela(renameTarget.id, nombre)
+    setRenameTarget(null)
+    onChanged()
+    toast('Parcela renombrada')
+  }
+
+  const selected = selectedId ? summaries.find((s) => s.id === selectedId) : null
   if (selected) {
     return (
       <ParcelaDashboard
         summary={selected}
-        isDark={isDark}
         onBack={() => setSelectedId(null)}
-        onChanged={refresh}
+        onChanged={onChanged}
         onAnalizarDeNuevo={() => onGoAnalizarParcela?.(selected.id)}
+        confirm={confirm}
+        toast={toast}
       />
     )
   }
 
-  const totalHa = summaries.reduce((a, p) => a + p.ha, 0)
-  const totalVisitas = summaries.reduce((a, p) => a + p.visits.length, 0)
+  const menuFor = (p) => [
+    { label: 'Ver detalle', Icon: IcoEye, onClick: () => setSelectedId(p.id) },
+    { label: 'Analizar de nuevo', Icon: IcoScan, onClick: () => onGoAnalizarParcela?.(p.id) },
+    { label: 'Renombrar', Icon: IcoPencil, onClick: () => setRenameTarget(p) },
+    { label: 'Eliminar', Icon: IcoTrash, onClick: () => removeParcela(p), danger: true },
+  ]
 
   return (
     <div className="space-y-5">
-      {/* Stats */}
-      {summaries.length > 0 && (
-        <div className="grid grid-cols-3 gap-4">
-          {[
-            { label: 'Parcelas registradas', value: summaries.length, unit: '',    color: '#7c3aed' },
-            { label: 'Hectáreas totales',    value: totalHa.toFixed(1), unit: ' ha', color: '#16a34a' },
-            { label: 'Visitas registradas',  value: totalVisitas, unit: '',    color: '#d97706' },
-          ].map((s, i) => (
-            <div key={i} className={`rounded-2xl border p-5 shadow-sm text-center ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-              <p className="text-3xl font-black" style={{ color: s.color }}>{s.value}<span className="text-base font-normal">{s.unit}</span></p>
-              <p className={`text-sm mt-1 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>{s.label}</p>
+      <div className="grid grid-cols-3 gap-2 sm:gap-4">
+        <KpiCard
+          icon={IcoMap}
+          value={stats.total}
+          label="Total de parcelas"
+          series={stats.seriesVisits}
+          onClick={() => setEstado('todas')}
+          title={`${plural(stats.visits, 'visita registrada', 'visitas registradas')} · tendencia semanal (últimas 8 semanas)`}
+        />
+        <KpiCard icon={IcoLayers} value={stats.ha.toFixed(1)} label="Hectáreas monitoreadas" tone="teal" />
+        <KpiCard
+          icon={IcoTriangle}
+          value={stats.affected}
+          label="Con afectación"
+          series={stats.seriesAffected}
+          tone="red"
+          active={estado === 'afectadas'}
+          onClick={() => setEstado(estado === 'afectadas' ? 'todas' : 'afectadas')}
+          title="Mostrar solo parcelas con afectación en su última visita"
+        />
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex flex-col gap-3 sm:flex-row">
+          <SearchInput value={query} onChange={setQuery} placeholder="Buscar parcela por nombre…" />
+          <FiltersButton open={filtersOpen} count={activeFilters} onClick={() => setFiltersOpen((o) => !o)} />
+        </div>
+
+        {filtersOpen && (
+          <div className={`${GLASS} fade-in flex flex-col gap-5 p-4 sm:flex-row sm:items-end sm:justify-between sm:p-5`}>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FilterGroup label="Estado de la última visita">
+                {[['todas', 'Todas'], ['sanas', 'Sanas'], ['afectadas', 'Con afectación']].map(([id, label]) => (
+                  <Pill key={id} active={estado === id} onClick={() => setEstado(id)}>{label}</Pill>
+                ))}
+              </FilterGroup>
+              <FilterGroup label="Severidad del lote">
+                {[['todas', 'Todas'], ['Leve', 'Leve'], ['Moderada', 'Moderada'], ['Grave', 'Grave']].map(([id, label]) => (
+                  <Pill key={id} active={severity === id} onClick={() => setSeverity(id)}>{label}</Pill>
+                ))}
+              </FilterGroup>
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* Empty */}
-      {summaries.length === 0 && (
-        <div className={`rounded-2xl border-2 border-dashed p-16 text-center ${isDark ? 'border-slate-700 bg-[#162032]' : 'border-slate-200 bg-white'}`}>
-          <div className={`mx-auto mb-4 w-16 h-16 rounded-2xl flex items-center justify-center text-3xl ${isDark ? 'bg-slate-800 border border-slate-700' : 'bg-slate-50 border border-slate-200'}`}>
-            🛰️
+            <button type="button" onClick={resetFilters} className="self-start text-sm font-semibold text-emerald-700 hover:text-emerald-800 sm:self-end dark:text-emerald-400">
+              Limpiar filtros
+            </button>
           </div>
-          <p className={`font-semibold ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>Sin parcelas registradas</p>
-          <p className={`text-sm mt-1 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
-            Usa "Analizar Parcela Completa" para crear tu primera parcela
-          </p>
-        </div>
-      )}
+        )}
 
-      {/* Cards */}
-      {summaries.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {summaries.map(s => (
-            <ParcelaSummaryCard key={s.id} summary={s} isDark={isDark} onClick={() => setSelectedId(s.id)} />
-          ))}
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <DiseaseChips value={disease} onChange={setDisease} allLabel="Todas" />
+          <SortSelect value={sort} onChange={setSort} options={PARCEL_SORTS} />
         </div>
-      )}
+      </div>
+
+      <div ref={listRef} className="scroll-mt-24">
+        {summaries.length === 0 ? (
+          <EmptyState
+            icon={IcoMap}
+            title="Aún no tienes parcelas"
+            text="Dibuja tu lote en el mapa y analiza sus puntos de muestreo para seguir su evolución visita a visita."
+            action={onGoAnalizar && (
+              <button type="button" onClick={() => onGoAnalizar('parcela')} className={BTN.primary}>
+                <IcoMap className="h-4 w-4" /> Analizar una parcela
+              </button>
+            )}
+          />
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon={IcoSearch}
+            title="Sin resultados"
+            text="Ninguna parcela coincide con la búsqueda o los filtros seleccionados."
+            action={<button type="button" onClick={resetFilters} className={BTN.secondary}>Limpiar filtros</button>}
+          />
+        ) : (
+          <ul className="space-y-3">
+            {paged.items.map((p) => (
+              <ParcelRow key={p.id} summary={p} onOpen={() => setSelectedId(p.id)} menuItems={menuFor(p)} />
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <Pagination paged={paged} onPage={goToPage} />
+
+      {renameTarget && <RenameDialog initial={renameTarget.nombre} onCancel={() => setRenameTarget(null)} onSave={saveName} />}
     </div>
   )
 }
 
-// ── ══════════════════════════════════════════════════════════════════════════ ──
-//    Main export
-// ── ══════════════════════════════════════════════════════════════════════════ ──
-export default function Historial({ history = [], onHistoryChange, initialTab = 'individual', onGoAnalizarParcela }) {
-  const { isDark } = useTheme()
-  const [tab, setTab] = useState(initialTab)
+// ══════════════════════════════════════════════════════════════════════════════
+//    Página
+// ══════════════════════════════════════════════════════════════════════════════
+// La pestaña la elige el submenú "Historial" de la barra lateral (App.jsx)
+export default function Historial({ history = [], onHistoryChange, tab = 'individual', onGoAnalizarParcela, onGoAnalizar }) {
+  const [summaries, setSummaries] = useState(() => getParcelaSummaries())
+  const [confirm, confirmDialog] = useConfirm()
+  const [toast, toastNode] = useToast()
+
+  const refreshParcelas = useCallback(() => setSummaries(getParcelaSummaries()), [])
+
+  // Otra pestaña puede terminar un análisis de parcela mientras esta está abierta
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (!e.key || e.key === PARCELAS_KEY || e.key === PARCEL_HISTORY_KEY) refreshParcelas()
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [refreshParcelas])
 
   return (
-    <div className="space-y-5 fade-up">
+    <div className="fade-up relative isolate space-y-5">
+      <PageGlow />
+      <PageHero title="Historial" {...(HERO_COPY[tab] ?? HERO_COPY.individual)} />
 
-      {/* ── Tab selector ── */}
-      <div className={`rounded-2xl border shadow-sm p-1.5 flex gap-1.5 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-        {[
-          { id: 'individual', icon: '🔬', label: 'Análisis Individual',    desc: 'Diagnósticos imagen a imagen' },
-          { id: 'parcelas',   icon: '🛰️', label: 'Parcelas Completas',      desc: 'Análisis de lotes con muestreo' },
-        ].map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className={`flex-1 flex items-center gap-3 px-4 py-3 rounded-xl text-left transition-all ${
-              tab === t.id ? 'text-white shadow-md' : isDark ? 'text-slate-400 hover:bg-slate-800/50' : 'text-slate-500 hover:bg-slate-50'
-            }`}
-            style={tab === t.id ? { background: 'linear-gradient(135deg,#7c3aed,#6d28d9)' } : {}}>
-            <span className="text-xl leading-none">{t.icon}</span>
-            <div>
-              <p className={`text-sm font-bold leading-tight ${tab === t.id ? 'text-white' : ''}`}>{t.label}</p>
-              <p className={`text-[11px] mt-0.5 ${tab === t.id ? 'text-violet-200' : 'text-slate-400'}`}>{t.desc}</p>
-            </div>
-          </button>
-        ))}
-      </div>
+      {tab !== 'parcelas' ? (
+        <PlantHistory history={history} onHistoryChange={onHistoryChange} onGoAnalizar={onGoAnalizar} confirm={confirm} toast={toast} />
+      ) : (
+        <ParcelHistory
+          summaries={summaries}
+          onChanged={refreshParcelas}
+          onGoAnalizarParcela={onGoAnalizarParcela}
+          onGoAnalizar={onGoAnalizar}
+          confirm={confirm}
+          toast={toast}
+        />
+      )}
 
-      {/* ── Tab content ── */}
-      {tab === 'individual' && <IndividualHistorial history={history} onHistoryChange={onHistoryChange} />}
-      {tab === 'parcelas'   && <ParcelHistorial onGoAnalizarParcela={onGoAnalizarParcela} />}
+      {confirmDialog}
+      {toastNode}
     </div>
   )
 }

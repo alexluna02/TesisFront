@@ -250,11 +250,47 @@ function useWeather() {
   return weather
 }
 
+const IcoUserSm = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 flex-shrink-0">
+    <circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0116 0"/>
+  </svg>
+)
+const IcoMapSm = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 flex-shrink-0">
+    <path d="M9 4 3 6.5V20l6-2.5 6 2.5 6-2.5V4l-6 2.5z"/><path d="M9 4v13.5M15 6.5V20"/>
+  </svg>
+)
+const IcoChevronDown = ({ className = '' }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={`w-4 h-4 flex-shrink-0 ${className}`}>
+    <path d="m6 9 6 6 6-6"/>
+  </svg>
+)
+
+const IcoImageSm = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4 flex-shrink-0">
+    <rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>
+  </svg>
+)
+
 // ── Nav config ────────────────────────────────────────────────────────────────
+// Analizar e Historial se abren como submenús: cada opción elige el modo / la pestaña
+const ANALIZAR_SUBNAV = [
+  { tab: 'individual', label: 'Análisis Individual',  Icon: IcoImageSm },
+  { tab: 'parcela',    label: 'Análisis por Parcela', Icon: IcoMapSm   },
+]
+const HISTORIAL_SUBNAV = [
+  { tab: 'individual', label: 'Historial Individual',  Icon: IcoUserSm },
+  { tab: 'parcelas',   label: 'Historial por Parcela', Icon: IcoMapSm  },
+]
+// Título de la barra superior para cada opción de los submenús
+const SUBNAV_TITLES = {
+  analizar:  { individual: 'Análisis Individual', parcela: 'Análisis por Parcela' },
+  historial: { individual: 'Historial Individual', parcelas: 'Historial por Parcela' },
+}
 const NAV = [
   { id: 'inicio',       label: 'Inicio',           Icon: IcoHome    },
-  { id: 'analizar',     label: 'Analizar',         Icon: IcoScan    },
-  { id: 'historial',    label: 'Historial',        Icon: IcoHistory },
+  { id: 'analizar',     label: 'Analizar',         Icon: IcoScan,    children: ANALIZAR_SUBNAV },
+  { id: 'historial',    label: 'Historial',        Icon: IcoHistory, children: HISTORIAL_SUBNAV },
   { id: 'enfermedades', label: 'Enfermedades',     Icon: IcoDisease },
   { id: 'mercado',      label: 'Mercado',          Icon: IcoMarket  },
   { id: 'acerca',       label: 'Acerca de',        Icon: IcoAbout   },
@@ -277,15 +313,92 @@ const navForRole = (role) => [
 ]
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-function Sidebar({ page, setPage, open, onClose, userName, userRol }) {
+const navItemClass = (active, isDark) => `relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 ${
+  active ? '' : isDark
+    ? 'text-slate-400 hover:text-slate-100 hover:bg-white/10'
+    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+}`
+const navItemStyle = (active, isDark) => (active
+  ? isDark
+    ? { background: 'rgba(139,92,246,0.18)', color: '#c4b5fd', boxShadow: 'inset 0 0 0 1px rgba(139,92,246,0.25)' }
+    : { background: 'rgba(255,255,255,0.72)', color: '#5b21b6', boxShadow: '0 1px 6px rgba(124,58,237,0.12), inset 0 0 0 1px rgba(139,92,246,0.25)' }
+  : { border: '1px solid transparent' })
+
+function NavGroup({ item, active, isDark, expanded, onToggle, currentTab, onSelect }) {
+  const { label, Icon, children } = item
+  const submenuId = `submenu-${item.id}`
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={expanded}
+        aria-controls={submenuId}
+        className={navItemClass(active, isDark)}
+        style={navItemStyle(active, isDark)}
+      >
+        {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-violet-500"/>}
+        <span style={{ color: active ? (isDark ? '#a78bfa' : '#7c3aed') : undefined }}><Icon /></span>
+        <span className="flex-1 text-left">{label}</span>
+        <IcoChevronDown className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+      </button>
+
+      {/* grid-rows 0fr → 1fr anima la altura del submenú sin medirla */}
+      <div
+        id={submenuId}
+        aria-hidden={!expanded}
+        className={`grid transition-[grid-template-rows] duration-300 ease-out ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
+      >
+        <div className="overflow-hidden">
+          <div
+            className="mt-1.5 mb-1 rounded-2xl p-1.5 space-y-0.5"
+            style={{
+              background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.45)',
+              border: '1px solid rgba(139,92,246,0.18)',
+              boxShadow: isDark ? 'none' : '0 4px 14px rgba(124,58,237,0.06)',
+            }}
+          >
+            {children.map(({ tab, label: subLabel, Icon: SubIcon }) => {
+              const subActive = active && currentTab === tab
+              return (
+                <button
+                  key={tab}
+                  type="button"
+                  tabIndex={expanded ? 0 : -1}
+                  onClick={() => onSelect(tab)}
+                  aria-current={subActive ? 'page' : undefined}
+                  className={`w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition-colors ${
+                    subActive
+                      ? isDark ? 'bg-violet-500/20 text-violet-200' : 'bg-white text-violet-700 shadow-sm'
+                      : isDark ? 'text-slate-400 hover:bg-white/10 hover:text-slate-100' : 'text-slate-600 hover:bg-white/70 hover:text-slate-900'
+                  }`}
+                >
+                  <SubIcon />
+                  <span className="truncate">{subLabel}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Sidebar({ page, setPage, open, onClose, userName, userRol, subTabs, onSelectSub }) {
   const { isDark } = useTheme()
+  // Acordeón: un solo submenú abierto. Al cambiar de página se abre el de esa página
+  // (p. ej. llegar al historial desde "Ver todo" en Inicio) y se cierran los demás.
+  const [openGroup, setOpenGroup] = useState(page)
+  useEffect(() => { setOpenGroup(page) }, [page])
+
   return (
     <>
       {open && (
         <div className="fixed inset-0 z-30 bg-black/30 backdrop-blur-sm lg:hidden" onClick={onClose}/>
       )}
       <aside
-        className={`fixed left-0 top-0 z-40 h-full w-52 flex flex-col transition-transform duration-300 ${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
+        className={`fixed left-0 top-0 z-40 h-full w-60 flex flex-col transition-transform duration-300 ${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
         style={{
           background: isDark
             ? 'linear-gradient(170deg, #1e1040 0%, #0e1f3d 45%, #0a2218 100%)'
@@ -318,23 +431,29 @@ function Sidebar({ page, setPage, open, onClose, userName, userRol }) {
 
         {/* Nav */}
         <nav className="px-3 space-y-0.5">
-          {navForRole(userRol).map(({ id, label, Icon }) => {
+          {navForRole(userRol).map((item) => {
+            const { id, label, Icon, children } = item
             const active = page === id
+            if (children) {
+              return (
+                <NavGroup
+                  key={id}
+                  item={item}
+                  active={active}
+                  isDark={isDark}
+                  expanded={openGroup === id}
+                  onToggle={() => setOpenGroup((g) => (g === id ? null : id))}
+                  currentTab={subTabs[id]}
+                  onSelect={(tab) => { onSelectSub(id, tab); onClose() }}
+                />
+              )
+            }
             return (
               <button
                 key={id}
                 onClick={() => { setPage(id); onClose() }}
-                className={`relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 ${
-                  active ? '' : isDark
-                    ? 'text-slate-400 hover:text-slate-100 hover:bg-white/10'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                }`}
-                style={active
-                  ? isDark
-                    ? { background: 'rgba(139,92,246,0.18)', color: '#c4b5fd', boxShadow: 'inset 0 0 0 1px rgba(139,92,246,0.25)' }
-                    : { background: 'rgba(255,255,255,0.72)', color: '#5b21b6', boxShadow: '0 1px 6px rgba(124,58,237,0.12), inset 0 0 0 1px rgba(139,92,246,0.25)' }
-                  : { border: '1px solid transparent' }
-                }
+                className={navItemClass(active, isDark)}
+                style={navItemStyle(active, isDark)}
               >
                 {active && (
                   <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-violet-500"/>
@@ -394,7 +513,7 @@ function Sidebar({ page, setPage, open, onClose, userName, userRol }) {
 }
 
 // ── Top bar ───────────────────────────────────────────────────────────────────
-function Topbar({ page, onMenuClick, apiStatus, userName, userEmail, userRol, onLogout, weather, setPage }) {
+function Topbar({ page, subTabs = {}, onMenuClick, apiStatus, userName, userEmail, userRol, onLogout, weather, setPage }) {
   const { isDark, toggle: toggleTheme } = useTheme()
   const [menuOpen, setMenuOpen] = useState(false)
   const [weatherOpen, setWeatherOpen] = useState(false)
@@ -420,7 +539,9 @@ function Topbar({ page, onMenuClick, apiStatus, userName, userEmail, userRol, on
           <IcoMenu />
         </button>
         <div>
-          <h1 className={`font-bold text-sm leading-tight ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{titles[page]}</h1>
+          <h1 className={`font-bold text-sm leading-tight ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+            {SUBNAV_TITLES[page]?.[subTabs[page]] ?? titles[page]}
+          </h1>
           <p className="text-[11px] text-slate-400 capitalize">{dateStr}</p>
         </div>
 
@@ -521,7 +642,7 @@ function Topbar({ page, onMenuClick, apiStatus, userName, userEmail, userRol, on
             <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-blue-500 flex items-center justify-center text-white text-[10px] font-black">
               {userName ? userName.charAt(0).toUpperCase() : 'U'}
             </div>
-            <span className="text-xs font-semibold text-slate-700">{userName}</span>
+            <span className="hidden text-xs font-semibold text-slate-700 sm:inline">{userName}</span>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3 h-3 text-slate-400"><path d="M19 9l-7 7-7-7"/></svg>
           </button>
 
@@ -1549,6 +1670,7 @@ export default function App() {
   const isResearcher = normalizeRole(userRol) === 'investigador' || normalizeRole(userRol) === 'researcher'
   const isAdmin = normalizeRole(userRol) === 'admin'
   const [historialTab, setHistorialTab] = useState('individual')
+  const [historialVisit, setHistorialVisit] = useState(0)
   const [preselectedParcelaId, setPreselectedParcelaId] = useState(null)
   const weather = useWeather()
 
@@ -1558,10 +1680,15 @@ export default function App() {
     setPage('analizar')
   }
 
+  // Cada clic en el submenú remonta el historial: volver a pulsar la sección activa regresa a la lista
   const goToHistorial = (tab = 'individual') => {
     setHistorialTab(tab)
+    setHistorialVisit((n) => n + 1)
     setPage('historial')
   }
+
+  // Opción activa de cada submenú del lateral (y título de la barra superior)
+  const subTabs = { analizar: analizarMode, historial: historialTab }
 
   // Evita reusar un parcelaId preseleccionado si el usuario navega a Analizar
   // por otra vía (ej. la barra lateral) después de haberlo consumido.
@@ -1669,11 +1796,21 @@ export default function App() {
     <>
       <FontLink />
       <div className="min-h-screen bg-slate-50 dark:bg-[#0c1220] flex">
-        <Sidebar page={page} setPage={setPage} open={sidebarOpen} onClose={() => setSidebarOpen(false)} userName={userName} userRol={userRol} />
+        <Sidebar
+          page={page}
+          setPage={setPage}
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          userName={userName}
+          userRol={userRol}
+          subTabs={subTabs}
+          onSelectSub={(group, tab) => (group === 'historial' ? goToHistorial(tab) : goToAnalizar(tab))}
+        />
 
-        <div className="flex-1 lg:ml-52 flex flex-col min-h-screen">
+        <div className="flex-1 lg:ml-60 flex flex-col min-h-screen">
           <Topbar
             page={page}
+            subTabs={subTabs}
             setPage={setPage}
             onMenuClick={() => setSidebarOpen(true)}
             apiStatus={apiStatus}
@@ -1690,8 +1827,8 @@ export default function App() {
             ) : (
               <HomePage setPage={setPage} apiStatus={apiStatus} history={analysisHistory} weather={weather} onGoAnalizar={goToAnalizar} onGoHistorial={goToHistorial} />
             ))}
-            {page === 'analizar' && <Analizar onHistoryChange={syncHistory} onAnalysisSaved={refreshHistory} history={analysisHistory} enfermedades={enfermedades} initialMode={analizarMode} preselectedParcelaId={preselectedParcelaId} showPerformance={canSeeResearch(userRol)} />}
-            {page === 'historial' && <Historial history={analysisHistory} onHistoryChange={syncHistory} initialTab={historialTab} onGoAnalizarParcela={(id) => goToAnalizar('parcela', id)} />}
+            {page === 'analizar' && <Analizar onHistoryChange={syncHistory} onAnalysisSaved={refreshHistory} history={analysisHistory} enfermedades={enfermedades} mode={analizarMode} preselectedParcelaId={preselectedParcelaId} showPerformance={canSeeResearch(userRol)} />}
+            {page === 'historial' && <Historial key={historialVisit} history={analysisHistory} onHistoryChange={syncHistory} tab={historialTab} onGoAnalizarParcela={(id) => goToAnalizar('parcela', id)} onGoAnalizar={(mode) => goToAnalizar(mode)} />}
             {page === 'enfermedades' && <Enfermedades />}
             {page === 'mercado' && <Mercado />}
             {page === 'perfil' && (
