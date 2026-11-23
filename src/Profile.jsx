@@ -2,9 +2,11 @@ import { useState } from 'react'
 import { updateProfile, changePassword } from './api.js'
 import { useTheme } from './ThemeContext.jsx'
 
-export default function Profile({ userName, userEmail, userRol, onNameChange }) {
+export default function Profile({ userName, userEmail, userRol, userEspecialidad, onNameChange, onEspecialidadChange }) {
   const { isDark } = useTheme()
+  const esExperto = userRol === 'experto'
   const [nombre,      setNombre]      = useState(userName ?? '')
+  const [especialidad, setEspecialidad] = useState(userEspecialidad ?? '')
   const [savingName,  setSavingName]  = useState(false)
   const [nameOk,      setNameOk]      = useState(false)
   const [nameError,   setNameError]   = useState('')
@@ -25,9 +27,10 @@ export default function Profile({ userName, userEmail, userRol, onNameChange }) 
     setNameError('')
     setNameOk(false)
     try {
-      await updateProfile({ nombre: nombre.trim() })
+      const { data } = await updateProfile(esExperto ? { nombre: nombre.trim(), especialidad: especialidad.trim() } : { nombre: nombre.trim() })
       setNameOk(true)
       if (typeof onNameChange === 'function') onNameChange(nombre.trim())
+      if (esExperto && typeof onEspecialidadChange === 'function') onEspecialidadChange(data?.especialidad ?? '')
       setTimeout(() => setNameOk(false), 3000)
     } catch (err) {
       setNameError(err?.response?.data?.detail || 'No se pudo actualizar el nombre.')
@@ -59,7 +62,7 @@ export default function Profile({ userName, userEmail, userRol, onNameChange }) 
   }
 
   const initial = nombre ? nombre.charAt(0).toUpperCase() : 'U'
-  const rolLabel = { agricultor: 'Agricultor', investigador: 'Investigador', admin: 'Administrador' }[userRol] ?? userRol ?? '—'
+  const rolLabel = { agricultor: 'Agricultor', investigador: 'Investigador', experto: 'Experto', admin: 'Administrador' }[userRol] ?? userRol ?? '—'
 
   return (
     <div className="space-y-6 fade-up max-w-2xl mx-auto">
@@ -111,8 +114,8 @@ export default function Profile({ userName, userEmail, userRol, onNameChange }) 
             </svg>
           </div>
           <div>
-            <h3 className="font-bold text-slate-900 text-sm">Editar nombre</h3>
-            <p className="text-xs text-slate-400">Actualiza cómo aparece tu nombre en la plataforma</p>
+            <h3 className="font-bold text-slate-900 text-sm">{esExperto ? 'Editar nombre y especialidad' : 'Editar nombre'}</h3>
+            <p className="text-xs text-slate-400">{esExperto ? 'Así te verán los agricultores en «Consultas»' : 'Actualiza cómo aparece tu nombre en la plataforma'}</p>
           </div>
         </div>
 
@@ -131,8 +134,25 @@ export default function Profile({ userName, userEmail, userRol, onNameChange }) 
             />
           </div>
 
+          {esExperto && (
+            <div className="space-y-1.5">
+              <label htmlFor="especialidad" className="text-xs font-semibold text-slate-600 uppercase tracking-wider">
+                Especialidad
+              </label>
+              <input
+                id="especialidad"
+                type="text"
+                value={especialidad}
+                maxLength={80}
+                onChange={(e) => setEspecialidad(e.target.value)}
+                placeholder="Ej.: Fitopatología del maíz"
+                className={`w-full rounded-xl border px-4 py-2.5 text-sm outline-none focus:border-violet-400 focus:ring-2 focus:ring-violet-100 transition ${isDark ? 'bg-[#0e1929] border-[#1e3048] text-slate-200 placeholder:text-slate-600' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
+              />
+            </div>
+          )}
+
           {nameError && <p className="text-sm text-rose-600 bg-rose-50 border border-rose-200 rounded-xl px-4 py-2">{nameError}</p>}
-          {nameOk    && <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2">Nombre actualizado correctamente.</p>}
+          {nameOk    && <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-2">{esExperto ? 'Perfil actualizado correctamente.' : 'Nombre actualizado correctamente.'}</p>}
 
           <button
             type="submit"
@@ -140,7 +160,7 @@ export default function Profile({ userName, userEmail, userRol, onNameChange }) 
             className="rounded-xl px-5 py-2.5 text-sm font-bold text-white transition disabled:opacity-60 disabled:cursor-not-allowed"
             style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)' }}
           >
-            {savingName ? 'Guardando…' : 'Guardar nombre'}
+            {savingName ? 'Guardando…' : esExperto ? 'Guardar cambios' : 'Guardar nombre'}
           </button>
         </form>
       </div>

@@ -103,6 +103,12 @@ const FIELD_LABELS = {
   nombre: 'el nombre',
   code: 'el código',
 }
+// La API guarda las fechas en UTC y las devuelve sin zona ("2026-11-17T18:51:00"); sin la Z
+// el navegador las toma como hora local y en Ecuador salen 5 h adelantadas
+export const apiDate = (value) => (
+  typeof value === 'string' && /T\d{2}:\d{2}/.test(value) && !/(Z|[+-]\d{2}:?\d{2})$/i.test(value) ? `${value}Z` : value
+)
+
 export const apiErrorMessage = (err, fallback = 'Ocurrió un error. Intenta de nuevo.') => {
   const detail = err?.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
@@ -136,7 +142,31 @@ export const verifyResetCodeRequest = (data)  => api.post('/auth/verify-reset-co
 export const resetPasswordRequest   = (data)  => api.post('/auth/reset-password', data)
 export const fetchMercadoResumen    = () => api.get('/mercado/resumen')
 export const fetchMercadoHistorico  = (producto, dias = 30) => api.get('/mercado/historico', { params: { producto, dias } })
+// Los 10 productos de AgroScan con su último precio, variación semanal y serie de «dias»
+export const fetchMercadoProductos  = (dias = 120) => api.get('/mercado/productos', { params: { dias } })
 export const fetchAdminUsers        = () => api.get('/admin/users')
 export const createAdminUser        = (data) => api.post('/admin/users', data)
 export const updateAdminUser        = (id, data) => api.patch(`/admin/users/${id}`, data)
+
+// ── Consultas a expertos (chat con polling: /consultas/resumen ~30 s, mensajes ~5 s) ──
+export const fetchExpertos          = () => api.get('/expertos')
+// { experto_id, tipo: 'general' } → el chat con ese experto (lo crea si no existe)
+export const crearConsulta          = (payload) => api.post('/consultas', payload)
+export const fetchConsultas         = (estado) => api.get('/consultas', { params: estado ? { estado } : {} })
+export const fetchConsultasResumen  = () => api.get('/consultas/resumen')
+// despues: ISO en UTC; pedir con unos segundos de margen y descartar repetidos por id
+export const fetchMensajesConsulta  = (id, despues) => api.get(`/consultas/${id}/mensajes`, { params: despues ? { despues } : {} })
+export const enviarMensajeConsulta  = (id, payload) => api.post(`/consultas/${id}/mensajes`, payload)
+export const marcarConsultaLeida    = (id) => api.post(`/consultas/${id}/leer`)
+// PDF adjunto (multipart, ≤ 10 MB); onProgress recibe la fracción subida (0 a 1)
+export const enviarDocumentoConsulta = (id, { archivo, texto, client_id }, onProgress) => {
+  const form = new FormData()
+  form.append('archivo', archivo)
+  if (texto) form.append('texto', texto)
+  if (client_id) form.append('client_id', client_id)
+  return api.post(`/consultas/${id}/documentos`, form, {
+    onUploadProgress: (e) => { if (e.total) onProgress?.(e.loaded / e.total) },
+  })
+}
+export const descargarDocumentoConsulta = (id, mensajeId) => api.get(`/consultas/${id}/mensajes/${mensajeId}/documento`, { responseType: 'blob' })
 export default api

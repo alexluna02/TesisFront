@@ -1,12 +1,18 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
-import { predictXai, predictSegmentation, createAnalisis } from './api.js'
+import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
+import { predictXai, predictSegmentation, createAnalisis, apiDate } from './api.js'
 import { exportAnalisisPDF } from './exportPDF.js'
 import { useTheme } from './ThemeContext.jsx'
-import { affectedFromRecord, affectedPercent, severityFromRecord, severityKey, severityOf } from './severity.js'
+import { affectedFromRecord, affectedPercent, isHealthyClass, severityFromRecord, severityKey, severityOf } from './severity.js'
 import { AnalysisTimingPanel, prepareUploadFile, timedRequest, timingFrom, useModelLoadTime } from './Rendimiento.jsx'
-import AnalizarParcela from './AnalizarParcela.jsx'
-import { recommendationsFor } from './diseases.js'
-import PageHero, { PageGlow } from './PageHero.jsx'
+import AnalizarParcela, { BTN_PRIMARY, CheckDot, IcoArrow, IcoCloudUp, PARCEL_CARD, PARCEL_TITLE, QueAnalizarCard, StepBar } from './AnalizarParcela.jsx'
+import { diseaseMeta, recommendationsFor } from './diseases.js'
+import { PageGlow } from './PageHero.jsx'
+import { RESULT_STYLE, resultColor, resultKeyOf, whenLabel } from './resultados.js'
+import SeverityScale from './SeverityScale.jsx'
+import heroDron from './Imagenes/hero-dron.webp'
+import ilustracionSubir from './Imagenes/parcela-subir.png'
+import inicioHojas from './Imagenes/inicio-hojas.png'
 
 const DISEASES = {
   Fondo_y_Sana:  { label: 'Cultivo Sano',   color: '#15803d', gradFrom: '#f0fdf4', gradTo: '#dcfce7', border: '#86efac', barColor: '#22c55e' },
@@ -18,13 +24,6 @@ const DISEASES = {
 }
 
 const DISEASE_IDS = { Fondo: 1, Fondo_y_Sana: 1, Tizon: 2, Roya: 3, Mancha_blanca: 4, Mancha_Blanca: 4 }
-
-const STEPS = [
-  'Preprocesando imagen UAV…',
-  'Ejecutando modelo de segmentación…',
-  'Generando mapa Grad-CAM XAI…',
-  'Guardando en historial…',
-]
 
 // ── Datos de tratamiento químico ──────────────────────────────────────────────
 
@@ -87,7 +86,7 @@ const _MANCHA = {
   },
 }
 
-const CHEMICAL_TREATMENTS = {
+export const CHEMICAL_TREATMENTS = {
   Tizon: _TIZON, Roya: _ROYA,
   Mancha_Blanca: _MANCHA, Mancha_blanca: _MANCHA,
 }
@@ -141,7 +140,7 @@ const mapAnalysisResponse = (record) => {
   const diseaseName = record.enfermedad?.nombre ?? 'Desconocido'
   return {
     id: record.id,
-    fecha: record.fecha,
+    fecha: apiDate(record.fecha),
     imagen: record.imagen_url,
     enfermedad: diseaseName,
     enfermedadLabel: DISEASES[diseaseName]?.label ?? diseaseName,
@@ -150,6 +149,7 @@ const mapAnalysisResponse = (record) => {
     cultivo: 'Maíz',
     recomendaciones: recommendationsFor(record.enfermedad?.nombre).map(r => r.body).join(' '),
     xaiImage: record.grad_cam_url,
+    resultadoImage: record.resultado_url,
     affectedPercent: confidence,
     estado: record.enfermedad?.clase_idx === 0 ? 'Sano' : 'Con enfermedad',
   }
@@ -163,7 +163,7 @@ function useCountUp(target, active) {
     const start = performance.now()
     const duration = 1100
     const tick = (now) => {
-      const t = Math.min((now - start) / duration, 1)
+      const t = Math.min(Math.max((now - start) / duration, 0), 1)
       const eased = 1 - Math.pow(1 - t, 3)
       setCount(Math.round(eased * target))
       if (t < 1) raf = requestAnimationFrame(tick)
@@ -172,30 +172,6 @@ function useCountUp(target, active) {
     return () => cancelAnimationFrame(raf)
   }, [target, active])
   return count
-}
-
-function CheckIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3.5 h-3.5">
-      <path d="M5 13l4 4L19 7"/>
-    </svg>
-  )
-}
-
-function HealthyIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-10 h-10">
-      <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-    </svg>
-  )
-}
-
-function DiseaseIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-10 h-10">
-      <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
-    </svg>
-  )
 }
 
 // ── Máscara de clases del modelo (mismo orden/paleta que model.py::PALETTE) ────
@@ -212,6 +188,104 @@ const hexToRgb = (hex) => {
 }
 
 // ── Imagen anotada: original + área afectada pintada + caja + etiqueta ───────
+// Pinta en `canvas` (outW × outH) la imagen original con el área de la clase detectada
+// resaltada, su caja y la etiqueta. Devuelve false si la máscara no contiene esa clase
+// (el lienzo queda entonces solo con la imagen original).
+function paintAnnotation(canvas, origImg, maskImg, { targetClassId, label, confidence, highlightColor, outW, outH }) {
+  const mW = maskImg.naturalWidth
+  const mH = maskImg.naturalHeight
+  const maskCanvas = document.createElement('canvas')
+  maskCanvas.width = mW
+  maskCanvas.height = mH
+  const maskCtx = maskCanvas.getContext('2d')
+  maskCtx.drawImage(maskImg, 0, 0)
+  const maskData = maskCtx.getImageData(0, 0, mW, mH)
+
+  const [tr, tg, tb] = MASK_PALETTE_RGB[targetClassId] ?? [255, 0, 0]
+  const [hr, hg, hb] = hexToRgb(highlightColor)
+  const highlight = maskCtx.createImageData(mW, mH)
+  let minX = mW, minY = mH, maxX = 0, maxY = 0, found = false
+
+  for (let y = 0; y < mH; y++) {
+    for (let x = 0; x < mW; x++) {
+      const i = (y * mW + x) * 4
+      if (maskData.data[i] === tr && maskData.data[i + 1] === tg && maskData.data[i + 2] === tb) {
+        highlight.data[i] = hr; highlight.data[i + 1] = hg; highlight.data[i + 2] = hb; highlight.data[i + 3] = 150
+        if (x < minX) minX = x
+        if (x > maxX) maxX = x
+        if (y < minY) minY = y
+        if (y > maxY) maxY = y
+        found = true
+      }
+    }
+  }
+
+  canvas.width = outW
+  canvas.height = outH
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(origImg, 0, 0, outW, outH)
+  if (!found) return false
+
+  maskCtx.putImageData(highlight, 0, 0)
+  // Sin suavizado: evita que manchas pequeñas y separadas (roya, mancha blanca)
+  // se difuminen entre sí al escalar la máscara 768x768 al tamaño de salida.
+  ctx.imageSmoothingEnabled = false
+  ctx.drawImage(maskCanvas, 0, 0, outW, outH)
+  ctx.imageSmoothingEnabled = true
+
+  const scaleX = outW / mW
+  const scaleY = outH / mH
+  const bx = minX * scaleX, by = minY * scaleY
+  const bw = Math.max((maxX - minX) * scaleX, 1)
+  const bh = Math.max((maxY - minY) * scaleY, 1)
+
+  ctx.strokeStyle = highlightColor
+  ctx.lineWidth = Math.max(2, outW * 0.004)
+  ctx.strokeRect(bx, by, bw, bh)
+
+  const labelText = `${label} ${Math.round(confidence)}%`
+  const fontSize = Math.max(16, Math.round(outW * 0.024))
+  ctx.font = `bold ${fontSize}px "Plus Jakarta Sans", sans-serif`
+  const paddingX = fontSize * 0.6
+  const textW = ctx.measureText(labelText).width
+  const badgeW = textW + paddingX * 2
+  const badgeH = fontSize * 1.8
+  let badgeX = bx
+  let badgeY = by - badgeH - 4
+  if (badgeY < 0) badgeY = by + 4
+  if (badgeX + badgeW > outW) badgeX = outW - badgeW - 4
+  if (badgeX < 0) badgeX = 0
+
+  ctx.fillStyle = highlightColor
+  ctx.fillRect(badgeX, badgeY, badgeW, badgeH)
+  ctx.fillStyle = '#ffffff'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(labelText, badgeX + paddingX, badgeY + badgeH / 2)
+  return true
+}
+
+const loadImage = (src) => new Promise((resolve, reject) => {
+  const img = new Image()
+  img.onload = () => resolve(img)
+  img.onerror = () => reject(new Error('No se pudo cargar la imagen'))
+  img.src = src
+})
+
+// Imagen de salida que se guarda con el análisis (JPEG, lado mayor ≤ maxSide) para mostrarla
+// después en Inicio. null si no hay máscara o la máscara no contiene la clase detectada.
+async function annotatedImageDataUrl({ originalSrc, maskBase64, maxSide = 900, quality = 0.82, ...opts }) {
+  if (!originalSrc || !maskBase64 || opts.targetClassId === null || opts.targetClassId === undefined) return null
+  const [origImg, maskImg] = await Promise.all([loadImage(originalSrc), loadImage(`data:image/png;base64,${maskBase64}`)])
+  const scale = Math.min(1, maxSide / Math.max(origImg.naturalWidth, origImg.naturalHeight))
+  const canvas = document.createElement('canvas')
+  const found = paintAnnotation(canvas, origImg, maskImg, {
+    ...opts,
+    outW: Math.round(origImg.naturalWidth * scale),
+    outH: Math.round(origImg.naturalHeight * scale),
+  })
+  return found ? canvas.toDataURL('image/jpeg', quality) : null
+}
+
 function AnnotatedResultImage({ originalSrc, maskBase64, targetClassId, label, confidence, highlightColor }) {
   const canvasRef = useRef(null)
 
@@ -237,78 +311,10 @@ function AnnotatedResultImage({ originalSrc, maskBase64, targetClassId, label, c
       const maskImg = new Image()
       maskImg.onload = () => {
         if (cancelled) return
-        const mW = maskImg.naturalWidth
-        const mH = maskImg.naturalHeight
-        const maskCanvas = document.createElement('canvas')
-        maskCanvas.width = mW
-        maskCanvas.height = mH
-        const maskCtx = maskCanvas.getContext('2d')
-        maskCtx.drawImage(maskImg, 0, 0)
-        const maskData = maskCtx.getImageData(0, 0, mW, mH)
-
-        const [tr, tg, tb] = MASK_PALETTE_RGB[targetClassId] ?? [255, 0, 0]
-        const [hr, hg, hb] = hexToRgb(highlightColor)
-        const highlight = maskCtx.createImageData(mW, mH)
-        let minX = mW, minY = mH, maxX = 0, maxY = 0, found = false
-
-        for (let y = 0; y < mH; y++) {
-          for (let x = 0; x < mW; x++) {
-            const i = (y * mW + x) * 4
-            if (maskData.data[i] === tr && maskData.data[i + 1] === tg && maskData.data[i + 2] === tb) {
-              highlight.data[i] = hr; highlight.data[i + 1] = hg; highlight.data[i + 2] = hb; highlight.data[i + 3] = 150
-              if (x < minX) minX = x
-              if (x > maxX) maxX = x
-              if (y < minY) minY = y
-              if (y > maxY) maxY = y
-              found = true
-            }
-          }
-        }
-
-        const outW = origImg.naturalWidth
-        const outH = origImg.naturalHeight
-        canvas.width = outW
-        canvas.height = outH
-        const ctx = canvas.getContext('2d')
-        ctx.drawImage(origImg, 0, 0, outW, outH)
-
-        if (found) {
-          maskCtx.putImageData(highlight, 0, 0)
-          // Sin suavizado: evita que manchas pequeñas y separadas (roya, mancha blanca)
-          // se difuminen entre sí al escalar la máscara 768x768 al tamaño de salida.
-          ctx.imageSmoothingEnabled = false
-          ctx.drawImage(maskCanvas, 0, 0, outW, outH)
-          ctx.imageSmoothingEnabled = true
-
-          const scaleX = outW / mW
-          const scaleY = outH / mH
-          const bx = minX * scaleX, by = minY * scaleY
-          const bw = Math.max((maxX - minX) * scaleX, 1)
-          const bh = Math.max((maxY - minY) * scaleY, 1)
-
-          ctx.strokeStyle = highlightColor
-          ctx.lineWidth = Math.max(2, outW * 0.004)
-          ctx.strokeRect(bx, by, bw, bh)
-
-          const labelText = `${label} ${Math.round(confidence)}%`
-          const fontSize = Math.max(16, Math.round(outW * 0.024))
-          ctx.font = `bold ${fontSize}px "Plus Jakarta Sans", sans-serif`
-          const paddingX = fontSize * 0.6
-          const textW = ctx.measureText(labelText).width
-          const badgeW = textW + paddingX * 2
-          const badgeH = fontSize * 1.8
-          let badgeX = bx
-          let badgeY = by - badgeH - 4
-          if (badgeY < 0) badgeY = by + 4
-          if (badgeX + badgeW > outW) badgeX = outW - badgeW - 4
-          if (badgeX < 0) badgeX = 0
-
-          ctx.fillStyle = highlightColor
-          ctx.fillRect(badgeX, badgeY, badgeW, badgeH)
-          ctx.fillStyle = '#ffffff'
-          ctx.textBaseline = 'middle'
-          ctx.fillText(labelText, badgeX + paddingX, badgeY + badgeH / 2)
-        }
+        paintAnnotation(canvas, origImg, maskImg, {
+          targetClassId, label, confidence, highlightColor,
+          outW: origImg.naturalWidth, outH: origImg.naturalHeight,
+        })
       }
       maskImg.onerror = () => drawPlain(origImg)
       maskImg.src = `data:image/png;base64,${maskBase64}`
@@ -322,78 +328,847 @@ function AnnotatedResultImage({ originalSrc, maskBase64, targetClassId, label, c
 }
 
 // ── Zona de carga: ilustración, hojas decorativas y ventajas ─────────────────
-function UploadIllustration() {
+// ── Análisis individual (diseño de la maqueta del usuario) ────────────────────
+// Antes de analizar: banner, pasos, zona de carga con vista previa tipo escáner y tarjetas de
+// apoyo. Al terminar: imagen original y máscara de segmentación, diagnóstico con la confianza del
+// modelo, mapa de calor Grad-CAM, recomendaciones e historial relacionado. Todo con datos reales
+// de la API; medidas a la escala en que el usuario ve sus maquetas (~0,68).
+const INDIVIDUAL_STEPS = ['Subir imagen', 'Procesar análisis', 'Ver resultados']
+const PROCESS_STEPS = [
+  'Preparando la imagen',
+  'Detectando enfermedades (segmentación y Grad-CAM)',
+  'Calculando el área afectada y la severidad',
+  'Guardando en tu historial',
+]
+const HERO_BULLETS = ['Diagnóstico en segundos', 'Detección y mapa de calor', 'Se guarda en tu historial']
+const PHOTO_TIPS = [
+  'Una sola hoja de maíz que ocupe casi toda la foto',
+  'Luz natural pareja, sin sombras fuertes ni flash',
+  'Imagen nítida: acércate hasta ver bien las manchas',
+  'Fondo despejado, sin otras plantas delante de la hoja',
+]
+// Escala TURBO de OpenCV (la que usa el backend para el Grad-CAM), de mayor a menor atención
+export const TURBO = 'linear-gradient(to bottom, #7a0403, #e5470b, #faba39, #a4fc3c, #1ae4b6, #4685fa, #30123b)'
+const MUTED = 'text-[#55656f] dark:text-slate-400'
+const ICON_BADGE = 'grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#e3f4e9] text-[#0b8a4b] dark:bg-emerald-400/15 dark:text-emerald-300 [&>svg]:h-4 [&>svg]:w-4'
+const BTN_SOFT = 'inline-flex items-center justify-center gap-1.5 rounded-full border border-[#dfe7e2] bg-white font-semibold text-[#334155] transition hover:border-[#bfe3c9] hover:bg-[#f6fbf7] disabled:opacity-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10 [&>svg]:h-3.5 [&>svg]:w-3.5'
+const BTN_DARK = 'flex h-9 w-full items-center justify-center gap-2 rounded-xl bg-[#0f6b46] text-[12px] font-semibold text-white shadow-[0_8px_16px_-10px_rgba(15,107,70,0.9)] transition hover:bg-[#0c5c3c] dark:bg-emerald-600 dark:hover:bg-emerald-500'
+
+// Colores de las tarjetas pequeñas del diagnóstico (texto con contraste ≥ 4.5:1)
+const TONES = {
+  base:     { card: 'border-[#dcefe3] bg-white/80 dark:border-white/10 dark:bg-white/[0.04]', icon: 'bg-[#e0f3e7] text-[#0b8a4b] dark:bg-emerald-400/15 dark:text-emerald-300', value: 'text-[#0b1226] dark:text-white' },
+  Sano:     { card: 'border-[#d3eedd] bg-[#f0faf3] dark:border-white/10 dark:bg-white/[0.04]', icon: 'bg-[#d6efdf] text-[#0b6b35] dark:bg-emerald-400/15 dark:text-emerald-300', value: 'text-[#0b6b35] dark:text-emerald-300' },
+  Leve:     { card: 'border-[#e2efcf] bg-[#f6fbef] dark:border-white/10 dark:bg-white/[0.04]', icon: 'bg-[#e6f4d2] text-[#4d7c0f] dark:bg-lime-400/15 dark:text-lime-300', value: 'text-[#4d7c0f] dark:text-lime-300' },
+  Moderada: { card: 'border-[#f5e2bf] bg-[#fdf7ec] dark:border-white/10 dark:bg-white/[0.04]', icon: 'bg-[#fbe9c4] text-[#b45309] dark:bg-amber-400/15 dark:text-amber-300', value: 'text-[#b45309] dark:text-amber-300' },
+  Grave:    { card: 'border-[#f6d5d5] bg-[#fdf1f1] dark:border-white/10 dark:bg-white/[0.04]', icon: 'bg-[#fbdcdc] text-[#c81e1e] dark:bg-red-400/15 dark:text-red-300', value: 'text-[#c81e1e] dark:text-red-300' },
+}
+
+const fechaHora = (iso) => {
+  const d = new Date(iso)
+  return `${d.toLocaleDateString('es-EC', { day: '2-digit', month: '2-digit', year: 'numeric' })} · ${d.toLocaleTimeString('es-EC', { hour: '2-digit', minute: '2-digit' })}`
+}
+
+// ── Iconos ────────────────────────────────────────────────────────────────────
+const Svg = ({ children, className = '', sw = 2 }) => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`shrink-0 ${className}`}>{children}</svg>
+)
+const IcoLeaf = ({ className }) => <Svg className={className}><path d="M5 19c0-8 5-13 15-14-1 10-6 15-14 15"/><path d="M5 19 13 11"/></Svg>
+const IcoImage = ({ className }) => <Svg className={className}><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="m21 16-5-5-9 9"/></Svg>
+const IcoChevronRight = ({ className }) => <Svg className={className} sw={2.4}><path d="m9 6 6 6-6 6"/></Svg>
+const IcoTrendUp = ({ className }) => <Svg className={className} sw={2.2}><path d="m3 17 6-6 4 4 8-8"/><path d="M15 7h6v6"/></Svg>
+const IcoBars = ({ className = '' }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={`shrink-0 ${className}`}>
+    <rect x="4" y="12" width="3.6" height="8" rx="1"/><rect x="10.2" y="8" width="3.6" height="12" rx="1"/><rect x="16.4" y="4" width="3.6" height="16" rx="1"/>
+  </svg>
+)
+const IcoPlant = ({ className }) => <Svg className={className}><path d="M12 21v-8"/><path d="M12 13c0-4.5-3-7-8-7 0 4.5 3 7 8 7Z"/><path d="M12 15c0-4 2.6-6.5 8-6.5 0 4-2.6 6.5-8 6.5Z"/></Svg>
+const IcoTarget = ({ className }) => <Svg className={className}><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></Svg>
+const IcoBulb = ({ className }) => <Svg className={className}><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1.1 2V17h5v-1.2c.1-.8.5-1.5 1.1-2A6 6 0 0 0 12 3Z"/></Svg>
+const IcoClock = ({ className }) => <Svg className={className} sw={2.2}><path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/><path d="M12 7.5V12l3 2"/></Svg>
+const IcoPdf = ({ className }) => <Svg className={className}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"/><path d="M14 3v5h5M12 18v-6M9.5 15.5 12 18l2.5-2.5"/></Svg>
+const IcoPlus = ({ className }) => <Svg className={className} sw={2.4}><path d="M12 5v14M5 12h14"/></Svg>
+const IcoCamera = ({ className }) => <Svg className={className}><path d="M4 8h3l2-3h6l2 3h3v11H4V8Z"/><circle cx="12" cy="13" r="3.5"/></Svg>
+const IcoShield = ({ className }) => <Svg className={className}><path d="M12 3 19 6v5.5c0 4.4-3 8.1-7 9.5-4-1.4-7-5.1-7-9.5V6l7-3Z"/><path d="m9 12 2.2 2.2L15.5 10"/></Svg>
+const IcoFlask = ({ className }) => <Svg className={className}><path d="M9 3h6M10 3v6l-5.5 9.5A1.6 1.6 0 0 0 5.9 21h12.2a1.6 1.6 0 0 0 1.4-2.5L14 9V3"/><path d="M7.5 15h9"/></Svg>
+const IcoBeaker = ({ className }) => <Svg className={className}><path d="M5 3h14M6 3v15a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V3"/><path d="M6 12h12"/></Svg>
+const IcoSpray = ({ className }) => <Svg className={className}><path d="M9 9h6v12H9z"/><path d="M10 9V6h4v3M14 6h2l2-2M18 8h2M18 11h2M17 14h2"/></Svg>
+const IcoZoom = ({ className }) => <Svg className={className} sw={2.2}><circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2M11 8.5v5M8.5 11h5"/></Svg>
+const IcoClose = ({ className }) => <Svg className={className} sw={2.4}><path d="M18 6 6 18M6 6l12 12"/></Svg>
+const IcoScan = ({ className }) => <Svg className={className}><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></Svg>
+
+function CheckCircle() {
   return (
-    <svg viewBox="0 0 220 130" className="h-32 w-56 transition-transform duration-300 group-hover:-translate-y-1 sm:h-36 sm:w-64" aria-hidden="true">
-      <defs>
-        <linearGradient id="agro-up-sky" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#60a5fa" />
-          <stop offset="1" stopColor="#bfdbfe" />
-        </linearGradient>
-        <linearGradient id="agro-up-hill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#22c55e" />
-          <stop offset="1" stopColor="#15803d" />
-        </linearGradient>
-        <linearGradient id="agro-up-btn" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#34d399" />
-          <stop offset="1" stopColor="#059669" />
-        </linearGradient>
-        <clipPath id="agro-up-card">
-          <rect x="66" y="22" width="80" height="62" rx="10" />
-        </clipPath>
-      </defs>
-      <ellipse cx="110" cy="74" rx="104" ry="34" fill="none" stroke="#10b981" strokeOpacity="0.25" />
-      <ellipse cx="110" cy="74" rx="78" ry="25" fill="none" stroke="#10b981" strokeOpacity="0.35" strokeDasharray="3 4" />
-      <circle cx="8" cy="70" r="2.5" fill="#10b981" fillOpacity="0.5" />
-      <circle cx="212" cy="80" r="2.5" fill="#10b981" fillOpacity="0.5" />
-      <g transform="rotate(9 122 56)">
-        <rect x="84" y="14" width="76" height="58" rx="10" fill="#dbeafe" stroke="#ffffff" strokeWidth="3" />
-      </g>
-      <g transform="rotate(-6 106 53)">
-        <g clipPath="url(#agro-up-card)">
-          <rect x="66" y="22" width="80" height="62" fill="url(#agro-up-sky)" />
-          <circle cx="128" cy="38" r="6" fill="#facc15" />
-          <path d="M60 86 L88 54 L106 72 L118 60 L150 90 Z" fill="url(#agro-up-hill)" />
-        </g>
-        <rect x="66" y="22" width="80" height="62" rx="10" fill="none" stroke="#ffffff" strokeWidth="3" />
-      </g>
-      <circle cx="148" cy="90" r="17" fill="url(#agro-up-btn)" stroke="#ffffff" strokeWidth="3" />
-      <path d="M148 98V83M141.5 89.5 148 83l6.5 6.5" stroke="#ffffff" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
+    <span aria-hidden="true" className="mt-px grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full bg-[#16a34a] text-white dark:bg-emerald-500">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+    </span>
+  )
+}
+const Spinner = ({ className = 'h-4 w-4' }) => (
+  <span aria-hidden="true" className={`inline-block animate-spin rounded-full border-2 border-current border-t-transparent ${className}`}/>
+)
+
+// ── Antes de analizar ─────────────────────────────────────────────────────────
+function IndividualHero() {
+  return (
+    <section className="relative overflow-hidden rounded-2xl border border-[#dbe8df] shadow-[0_14px_30px_-24px_rgba(15,60,40,0.55)] dark:border-white/10">
+      <img src={heroDron} alt="" aria-hidden="true" draggable="false" className="absolute inset-0 h-full w-full select-none object-cover object-left dark:brightness-[0.45]"/>
+      <div className="absolute inset-0 bg-linear-to-r from-white/80 via-white/55 to-white/10 lg:hidden dark:hidden"/>
+      <div className="absolute inset-0 hidden bg-linear-to-r from-[#0c1220]/90 via-[#0c1220]/60 to-[#0c1220]/10 dark:block"/>
+      <div className="relative flex items-start gap-4 px-4 pb-4 pt-5 sm:pl-[18px] sm:pr-6">
+        <span className="hidden h-[52px] w-[52px] shrink-0 place-items-center rounded-[14px] bg-linear-to-b from-[#13a35c] to-[#03823f] text-white shadow-[0_8px_18px_-8px_rgba(3,130,63,0.8)] sm:grid">
+          <IcoLeaf className="h-7 w-7"/>
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-[23px] font-extrabold leading-tight text-[#0b1226] dark:text-white">
+            Analiza <span className="text-[#0b8a4b] dark:text-emerald-400">tu cultivo</span> individual
+          </h2>
+          <p className="mt-1 text-[11.5px] leading-snug text-[#1d2640] dark:text-slate-300">Detecta enfermedades en tus hojas con el poder de la IA.</p>
+          <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1.5">
+            {HERO_BULLETS.map((t) => (
+              <li key={t} className="flex items-center gap-1.5 text-[10.5px] font-medium text-[#1d2640] dark:text-slate-200"><CheckDot/>{t}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </section>
   )
 }
 
-const DecorLeaf = ({ className, flip = false }) => (
-  <svg viewBox="0 0 120 120" aria-hidden="true" className={className} style={flip ? { transform: 'scaleX(-1)' } : undefined}>
-    <path d="M10 110C10 50 50 10 110 10c0 60-40 100-100 100Z" fill="currentColor" />
-    <path d="M10 110C40 80 70 50 110 10" fill="none" strokeWidth="2" className="stroke-white/60 dark:stroke-emerald-300/15" />
-  </svg>
-)
+// Esquinas de visor sobre la vista previa
+function ScanCorners() {
+  const corners = ['left-0 top-0 rounded-tl-lg border-l-2 border-t-2', 'right-0 top-0 rounded-tr-lg border-r-2 border-t-2', 'bottom-0 left-0 rounded-bl-lg border-b-2 border-l-2', 'bottom-0 right-0 rounded-br-lg border-b-2 border-r-2']
+  return (
+    <span aria-hidden="true" className="pointer-events-none absolute inset-x-3 bottom-[46px] top-3">
+      {corners.map((c) => <span key={c} className={`absolute h-6 w-6 border-emerald-300/90 ${c}`}/>)}
+    </span>
+  )
+}
 
-const IcoImage = ({ className = 'h-6 w-6' }) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
-    <rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" />
-  </svg>
-)
+// Rejilla y línea de escaneo mientras el modelo trabaja (sin animación si se pide menos movimiento)
+function ScanOverlay() {
+  return (
+    <span aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+      <style>{'@keyframes agro-scan{0%{transform:translateY(-100%)}100%{transform:translateY(400%)}}'}</style>
+      <span
+        className="absolute inset-0 bg-emerald-950/25"
+        style={{ backgroundImage: 'linear-gradient(rgba(52,211,153,.16) 1px, transparent 1px), linear-gradient(90deg, rgba(52,211,153,.16) 1px, transparent 1px)', backgroundSize: '26px 26px' }}
+      />
+      <span className="absolute inset-x-0 top-0 h-1/4 bg-linear-to-b from-transparent to-emerald-300/30 motion-safe:animate-[agro-scan_2.2s_linear_infinite]">
+        <span className="absolute inset-x-0 bottom-0 h-0.5 bg-emerald-300 shadow-[0_0_14px_3px_rgba(52,211,153,0.7)]"/>
+      </span>
+    </span>
+  )
+}
 
-const UPLOAD_FEATURES = [
-  {
-    text: 'Análisis seguro con IA',
-    icon: <path d="M12 2.5 4.5 5.5v5.7c0 4.9 3.2 9 7.5 10.3 4.3-1.3 7.5-5.4 7.5-10.3V5.5L12 2.5Zm-1.2 13.2-3.3-3.3 1.4-1.4 1.9 1.9 4.6-4.6 1.4 1.4-6 6Z" fill="currentColor" />,
-  },
-  {
-    text: 'Resultados en segundos',
-    icon: <path d="M13.5 2 4.5 13.5h6L9.5 22l9-11.5h-6L13.5 2Z" fill="currentColor" />,
-  },
-  {
-    text: 'Soporte para imágenes de alta resolución',
-    icon: <path d="M20.5 3.5C11 3.5 4.5 8.5 4.5 16c0 1.6.4 3 1 4.2C7.5 14.5 11 11 16 9c-4.2 2.6-7.2 6.3-8.6 11.2 1 .5 2.2.8 3.6.8 7 0 9.5-6.5 9.5-17.5Z" fill="currentColor" />,
-  },
-]
+function UploadPanel({ file, preview, sizeLabel, dragging, loading, error, onPick, onAnalyze, dropProps }) {
+  return (
+    <section className={`${PARCEL_CARD} p-2.5`} {...dropProps}>
+      {!preview ? (
+        <div
+          onClick={onPick}
+          className={`relative flex h-full min-h-[262px] cursor-pointer flex-col items-center justify-center overflow-hidden rounded-[12px] border-2 border-dashed px-6 py-5 text-center transition ${
+            dragging
+              ? 'border-[#0b8a4b] bg-[#e9f6ee] dark:border-emerald-400 dark:bg-emerald-400/10'
+              : 'border-[#c6e8d2] bg-linear-to-b from-[#fbfdfc] to-[#f0f8f2] hover:border-[#8fd0a6] dark:border-emerald-400/20 dark:from-white/[0.02] dark:to-emerald-400/[0.05]'
+          }`}
+        >
+          <img src={ilustracionSubir} alt="" aria-hidden="true" draggable="false" className="h-[66px] w-auto select-none"/>
+          <h3 className={`mt-2 text-[16.5px] ${PARCEL_TITLE}`}>{dragging ? '¡Suelta la imagen aquí!' : 'Arrastra tu imagen aquí'}</h3>
+          <p className="mt-0.5 text-[11.5px] text-[#4b556c] dark:text-slate-400">o selecciónala desde tu dispositivo</p>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onPick() }} className={`${BTN_PRIMARY} mt-4 h-[34px] px-6 text-[12px]`}>
+            <IcoCloudUp/>
+            Seleccionar imagen
+            <IcoArrow/>
+          </button>
+          <p className="mt-3 text-[9.5px] text-[#64748b] dark:text-slate-500">JPG, PNG o WEBP · hasta 20 MB · una hoja de maíz por foto</p>
+          {error && <p role="alert" className="mt-2 text-[11px] font-semibold text-red-600 dark:text-red-300">{error}</p>}
+        </div>
+      ) : (
+        <div className="flex h-full flex-col">
+          <div className="relative h-[250px] overflow-hidden rounded-[12px] bg-[#0f1a14] sm:h-[290px]">
+            <img src={preview} alt="" aria-hidden="true" draggable="false" className="absolute inset-0 h-full w-full scale-110 select-none object-cover opacity-50 blur-xl"/>
+            <img src={preview} alt="Vista previa de la imagen elegida" className={`relative h-full w-full object-contain transition-opacity ${loading ? 'opacity-80' : ''}`}/>
+            <ScanCorners/>
+            {loading && <ScanOverlay/>}
+            {dragging && !loading && (
+              <span className="absolute inset-0 grid place-items-center bg-emerald-950/60 text-[13px] font-semibold text-white">Suelta para cambiar la imagen</span>
+            )}
+            <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-linear-to-t from-black/75 to-transparent px-3 pb-2.5 pt-6">
+              <IcoImage className="h-4 w-4 text-white/80"/>
+              <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white/90" title={file?.name}>{file?.name}</span>
+              <span className="text-[10.5px] text-white/70">{sizeLabel}</span>
+              {!loading && (
+                <button type="button" onClick={onPick} className="rounded-full border border-white/25 bg-white/15 px-2.5 py-1 text-[10.5px] font-semibold text-white backdrop-blur-sm transition hover:bg-white/25">
+                  Cambiar imagen
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 px-1.5 pb-0.5 pt-3">
+            <p className="min-w-0 flex-1 text-[11px]" aria-live="polite">
+              {error ? (
+                <span role="alert" className="font-semibold text-red-600 dark:text-red-300">{error}</span>
+              ) : loading ? (
+                <span className="font-semibold text-[#0b6b35] dark:text-emerald-300">Analizando la imagen…</span>
+              ) : (
+                <span className="inline-flex items-center gap-1.5 font-semibold text-[#0b6b35] dark:text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-[#0b8a4b] dark:bg-emerald-400"/>Lista para analizar</span>
+              )}
+            </p>
+            <button type="button" onClick={onAnalyze} disabled={loading} className={`${BTN_PRIMARY} h-[34px] px-6 text-[12px]`}>
+              {loading ? <><Spinner className="h-3.5 w-3.5"/>Analizando…</> : <><IcoScan className="h-4 w-4"/>{error ? 'Reintentar' : 'Analizar imagen'}<IcoArrow/></>}
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+function PhotoTipsCard() {
+  return (
+    <section className={`relative overflow-hidden ${PARCEL_CARD} px-4 pb-4 pt-3`}>
+      <img src={inicioHojas} alt="" aria-hidden="true" draggable="false" className="pointer-events-none absolute bottom-0 right-0 h-[56px] w-auto select-none dark:opacity-10"/>
+      <h3 className={`relative flex items-center gap-2.5 text-[13.5px] ${PARCEL_TITLE}`}>
+        <span className={ICON_BADGE}><IcoCamera/></span>
+        Consejos para una buena foto
+      </h3>
+      <ul className="relative mt-3 space-y-2.5">
+        {PHOTO_TIPS.map((t) => (
+          <li key={t} className="flex items-start gap-2 text-[11.5px] leading-snug text-[#1d2640] dark:text-slate-300"><span className="mt-px"><CheckDot/></span>{t}</li>
+        ))}
+      </ul>
+      <p className="relative mt-3.5 max-w-[85%] rounded-lg bg-[#f3faf6] px-3 py-2 text-[10.5px] leading-snug text-[#33584a] dark:bg-white/[0.04] dark:text-slate-300">
+        El modelo analiza la foto a 384 × 384 píxeles: encuadra bien la hoja para que se vea clara a ese tamaño.
+      </p>
+    </section>
+  )
+}
+
+function ProcessingCard({ step }) {
+  return (
+    <section className={`${PARCEL_CARD} px-4 pb-4 pt-3.5`} aria-live="polite">
+      <header className="flex items-center gap-3">
+        <span className="relative h-9 w-9 shrink-0">
+          <span className="absolute inset-0 rounded-full border-[3px] border-[#e3f1e8] dark:border-white/10"/>
+          <span className="absolute inset-0 animate-spin rounded-full border-[3px] border-transparent border-t-[#0b8a4b] dark:border-t-emerald-400"/>
+        </span>
+        <div className="min-w-0">
+          <h3 className={`text-[13.5px] ${PARCEL_TITLE}`}>Procesando con inteligencia artificial</h3>
+          <p className={`text-[11px] ${MUTED}`}>Segmentación semántica y mapa de calor Grad-CAM</p>
+        </div>
+      </header>
+      <ol className="mt-3.5 space-y-2">
+        {PROCESS_STEPS.map((label, i) => {
+          const done = i < step
+          const active = i === step
+          return (
+            <li key={label} className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition ${active ? 'border-[#bfe3c9] bg-[#f1faf4] dark:border-emerald-400/30 dark:bg-emerald-400/10' : 'border-transparent'}`}>
+              <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full ${done ? 'bg-[#0b8a4b] text-white dark:bg-emerald-500' : active ? 'bg-[#d6efdf] dark:bg-emerald-400/20' : 'bg-slate-100 dark:bg-white/10'}`}>
+                {done ? (
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-3 w-3"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+                ) : active ? (
+                  <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#0b8a4b] dark:bg-emerald-400"/>
+                ) : (
+                  <span className="h-1.5 w-1.5 rounded-full bg-slate-300 dark:bg-white/30"/>
+                )}
+              </span>
+              <span className={`min-w-0 flex-1 text-[12px] font-medium ${done ? MUTED : active ? 'text-[#0b6b35] dark:text-emerald-300' : 'text-[#64748b] dark:text-slate-500'}`}>{label}</span>
+              {active && <span className="rounded-full bg-[#e5f6ee] px-2 py-0.5 text-[10px] font-semibold text-[#0a6332] dark:bg-emerald-400/10 dark:text-emerald-300">En curso</span>}
+              {done && <span className={`text-[10px] ${MUTED}`}>Listo</span>}
+            </li>
+          )
+        })}
+      </ol>
+      <p className={`mt-3 text-[10px] ${MUTED}`}>Suele tardar unos segundos; la primera vez del día puede demorar más mientras el servidor se activa.</p>
+    </section>
+  )
+}
+
+function RecentAnalyses({ history, onGoHistorial }) {
+  const items = [...history].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 4)
+  return (
+    <section className={`${PARCEL_CARD} px-3 pb-3 pt-1.5`}>
+      <header className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-1 py-1.5">
+        <span className="text-[#0b8a4b] dark:text-emerald-400"><IcoClock className="h-[18px] w-[18px]"/></span>
+        <h3 className={`text-[13.5px] ${PARCEL_TITLE}`}>Tus últimos análisis</h3>
+        {onGoHistorial && items.length > 0 && (
+          <button type="button" onClick={() => onGoHistorial('individual')} className="ml-auto inline-flex items-center gap-1.5 rounded-md text-[10.5px] font-semibold text-[#0b6b35] transition hover:text-[#02894b] hover:underline dark:text-emerald-400">
+            Ver historial completo
+            <IcoArrow/>
+          </button>
+        )}
+      </header>
+      {items.length === 0 ? (
+        <p className={`px-1 pb-2 pt-1 text-[11.5px] ${MUTED}`}>Aún no tienes análisis individuales. Sube tu primera foto para empezar.</p>
+      ) : (
+        <div className="mt-1 grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
+          {items.map((h) => {
+            const key = resultKeyOf(h.enfermedad, h.estado === 'Sano')
+            const st = RESULT_STYLE[key] ?? RESULT_STYLE.otro
+            return (
+              <button
+                key={h.id}
+                type="button"
+                onClick={() => onGoHistorial?.('individual')}
+                aria-label={`${st.short}, ${whenLabel(h.fecha, ' a las ')}: ver en el historial`}
+                className="flex items-center gap-3 rounded-xl border border-[#e9eef1] bg-linear-to-br from-white to-[#f5faf6] p-2 text-left shadow-[0_4px_14px_-12px_rgba(15,40,30,0.4)] transition hover:border-[#bfe3c9] hover:shadow-md dark:border-white/10 dark:from-white/[0.03] dark:to-emerald-400/[0.04] dark:hover:border-emerald-400/30"
+              >
+                <span className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-[#e3f2e6] dark:bg-white/5">
+                  {(h.resultadoImage || h.imagen) && <img src={h.resultadoImage || h.imagen} alt="" loading="lazy" className="h-full w-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none' }}/>}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className={`inline-flex h-[19px] max-w-full items-center gap-1 rounded-full px-2 text-[9.5px] font-semibold ${st.chip}`}>
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.icon}`}/>
+                    <span className="truncate">{st.short}</span>
+                  </span>
+                  <span className={`mt-1 block truncate text-[10.5px] ${MUTED}`}>{whenLabel(h.fecha, ', ')}</span>
+                  {key !== 'sano' && <span className="block text-[10.5px] font-semibold text-[#1d2640] dark:text-slate-200">{Number(h.affectedPercent ?? 0).toFixed(1)} % afectado</span>}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
+// ── Resultado ─────────────────────────────────────────────────────────────────
+// Ampliación de una imagen: un clic la abre a pantalla completa; otro clic (o Escape) la cierra y
+// el foco vuelve a la imagen pequeña
+export function ZoomOverlay({ label, onClose, children }) {
+  const closeRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  useEffect(() => { onCloseRef.current = onClose })
+  useEffect(() => {
+    const previous = document.activeElement
+    // En fase de captura y sin propagarse: si la imagen está dentro de otro diálogo (detalle del
+    // historial), Escape cierra solo la ampliación
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      onCloseRef.current()
+    }
+    document.addEventListener('keydown', onKey, true)
+    const overflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    closeRef.current?.focus()
+    return () => {
+      document.removeEventListener('keydown', onKey, true)
+      document.body.style.overflow = overflow
+      if (previous instanceof HTMLElement) previous.focus()
+    }
+  }, [])
+  return createPortal(
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`${label} ampliada`}
+      onClick={onClose}
+      className="fixed inset-0 z-[60] flex cursor-zoom-out items-center justify-center bg-[#020a06]/85 px-3 pb-14 pt-14 backdrop-blur-sm sm:px-8"
+    >
+      <style>{'@keyframes agro-zoom{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:scale(1)}}'}</style>
+      <div className="relative h-full w-full max-w-[1400px] motion-safe:animate-[agro-zoom_.18s_ease-out]">{children}</div>
+      <button
+        ref={closeRef}
+        type="button"
+        onClick={onClose}
+        aria-label="Cerrar la imagen ampliada"
+        className="absolute right-3 top-3 grid h-9 w-9 place-items-center rounded-full bg-white/15 text-white transition hover:bg-white/25 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white sm:right-5"
+      >
+        <IcoClose className="h-4 w-4"/>
+      </button>
+      <p className="pointer-events-none absolute bottom-3 left-1/2 max-w-[90vw] -translate-x-1/2 truncate rounded-full bg-white/10 px-3 py-1 text-[11px] font-medium text-white/90 backdrop-blur-sm">
+        {label} · haz clic para volver
+      </p>
+    </div>,
+    document.body,
+  )
+}
+
+// Zona de imagen que se amplía al hacer clic
+export function ZoomTrigger({ label, onOpen, children }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={`Ampliar: ${label}`}
+      title="Clic para ampliar"
+      className="group absolute inset-0 block cursor-zoom-in overflow-hidden outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-emerald-400"
+    >
+      {children}
+      <span aria-hidden="true" className="pointer-events-none absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/45 px-2 py-1 text-[10px] font-semibold text-white opacity-80 backdrop-blur-sm transition group-hover:opacity-100 group-focus-visible:opacity-100">
+        <IcoZoom className="h-3.5 w-3.5"/>
+        Ampliar
+      </span>
+    </button>
+  )
+}
+
+export function FittedImage({ src, alt }) {
+  return (
+    <>
+      <img src={src} alt="" aria-hidden="true" draggable="false" className="absolute inset-0 h-full w-full scale-110 select-none object-cover opacity-50 blur-lg"/>
+      <img src={src} alt={alt} className="relative h-full w-full object-contain"/>
+    </>
+  )
+}
+
+function ImagePanel({ icon, label, children }) {
+  return (
+    <figure className="flex min-w-0 flex-col overflow-hidden rounded-[10px] border border-[#e9eef1] bg-[#f7f9fa] dark:border-white/10 dark:bg-white/[0.03]">
+      <figcaption className="flex items-center gap-2 px-2.5 py-1.5 text-[11px] font-semibold text-[#1d2640] dark:text-slate-200">
+        <span className="text-[#0b6b35] dark:text-emerald-300">{icon}</span>
+        <span className="truncate">{label}</span>
+      </figcaption>
+      <div className="relative aspect-[16/10] w-full overflow-hidden bg-[#0f1a14]">{children}</div>
+    </figure>
+  )
+}
+
+function ResultImagesCard({ preview, maskBase64, result, isHealthy, disease, exporting, onExport, onNew }) {
+  const [zoom, setZoom] = useState(null)   // 'original' | 'deteccion' | null
+  const label = disease?.label ?? result.target_class
+  const color = disease?.barColor ?? '#ef4444'
+  const area = Number(result.confidence ?? 0)
+  const conDeteccion = !isHealthy && !!maskBase64
+  // Imagen de salida del modelo: original + zona afectada en color + caja + etiqueta
+  const deteccion = (
+    <AnnotatedResultImage
+      originalSrc={preview}
+      maskBase64={maskBase64}
+      targetClassId={Number(result.target_class_id)}
+      label={label}
+      confidence={result.model_confidence ?? result.confidence}
+      highlightColor={color}
+    />
+  )
+  const chip = (texto) => (
+    <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full bg-white/90 px-3 py-1 text-[11px] font-semibold text-[#0b6b35] shadow-md backdrop-blur-sm dark:bg-[#0f1a2b]/90 dark:text-emerald-300">{texto}</span>
+  )
+  return (
+    <section className={`${PARCEL_CARD} flex min-w-0 flex-col px-3.5 pb-3 pt-3`}>
+      <header className="flex flex-wrap items-center gap-x-2.5 gap-y-2">
+        <span className={ICON_BADGE}><IcoLeaf/></span>
+        <h3 className={`text-[14px] ${PARCEL_TITLE}`}>Resultado del análisis</h3>
+        <div className="ml-auto flex flex-wrap gap-2">
+          <button type="button" onClick={onExport} disabled={exporting} className={`${BTN_SOFT} h-7 px-3 text-[11px]`}>
+            <IcoPdf/>
+            {exporting ? 'Generando…' : 'Exportar PDF'}
+          </button>
+          <button type="button" onClick={onNew} className={`${BTN_SOFT} h-7 px-3 text-[11px]`}>
+            <IcoPlus/>
+            Analizar otra imagen
+          </button>
+        </div>
+      </header>
+      <div className="relative mt-2.5 grid gap-3 sm:grid-cols-2">
+        <ImagePanel icon={<IcoImage className="h-3.5 w-3.5"/>} label="Imagen original">
+          <ZoomTrigger label="imagen original" onOpen={() => setZoom('original')}>
+            <FittedImage src={preview} alt="Imagen original analizada"/>
+          </ZoomTrigger>
+        </ImagePanel>
+        <ImagePanel icon={<IcoScan className="h-3.5 w-3.5"/>} label="Detección del modelo">
+          <ZoomTrigger label="detección del modelo" onOpen={() => setZoom('deteccion')}>
+            {conDeteccion ? (
+              <>
+                <img src={preview} alt="" aria-hidden="true" draggable="false" className="absolute inset-0 h-full w-full scale-110 select-none object-cover opacity-40 blur-lg"/>
+                <span className="relative block h-full w-full">{deteccion}</span>
+              </>
+            ) : (
+              <>
+                <FittedImage src={preview} alt={isHealthy ? 'Imagen analizada: sin zonas afectadas' : 'Imagen analizada'}/>
+                {chip(isHealthy ? 'Sin zonas afectadas' : 'Detección no disponible')}
+              </>
+            )}
+          </ZoomTrigger>
+        </ImagePanel>
+        <span aria-hidden="true" className="pointer-events-none absolute left-1/2 top-[calc(50%+13px)] hidden h-9 w-9 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-[#e6ebf0] bg-white text-[#0b1226] shadow-md sm:grid dark:border-white/10 dark:bg-[#1b2940] dark:text-white">
+          <IcoChevronRight className="h-4 w-4"/>
+        </span>
+      </div>
+      <p className={`mt-2 flex items-center gap-1.5 text-[10.5px] ${MUTED}`}>
+        {isHealthy ? (
+          'El modelo no encontró zonas con Tizón, Roya ni Mancha blanca en esta foto.'
+        ) : (
+          <>
+            <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: color }}/>
+            En color, la zona que el modelo detectó como {label.toLowerCase()}: {area.toFixed(1)} % de la imagen. Haz clic en una imagen para ampliarla.
+          </>
+        )}
+      </p>
+      {zoom === 'original' && (
+        <ZoomOverlay label="Imagen original" onClose={() => setZoom(null)}>
+          <img src={preview} alt="Imagen original analizada" className="h-full w-full object-contain"/>
+        </ZoomOverlay>
+      )}
+      {zoom === 'deteccion' && (
+        <ZoomOverlay label="Detección del modelo" onClose={() => setZoom(null)}>
+          {conDeteccion ? deteccion : <img src={preview} alt="Imagen analizada" className="h-full w-full object-contain"/>}
+        </ZoomOverlay>
+      )}
+    </section>
+  )
+}
+
+function ResultBadgeIcon({ resultKey }) {
+  const { isDark } = useTheme()
+  const color = resultColor(resultKey, isDark)
+  const crema = resultKey === 'mancha'
+  return (
+    <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white shadow-[0_8px_18px_-10px_rgba(15,40,30,0.45)] ring-1 ring-black/5 dark:bg-white/10 dark:ring-white/10">
+      <svg viewBox="0 0 48 48" aria-hidden="true" className="h-10 w-10">
+        {resultKey === 'sano' ? (
+          <>
+            <circle cx="24" cy="24" r="20" fill={color}/>
+            <path d="m15 24.5 6 6 12-13" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+          </>
+        ) : (
+          <>
+            <path d="M24 4.5c1.6 0 3 .8 3.8 2.2l17 29.4c1.7 3-.4 6.6-3.8 6.6H7c-3.4 0-5.5-3.6-3.8-6.6l17-29.4C21 5.3 22.4 4.5 24 4.5Z" fill={color} stroke={crema ? '#b8994f' : 'none'} strokeWidth="1.5"/>
+            <path d="M16.5 35c0-8.4 4.8-14 14.6-15-.6 9.6-5.8 14.6-14.6 15Z" fill={crema ? '#76602b' : '#fff'}/>
+            <path d="M16.5 35 26 25.6" stroke={crema ? '#f6efdb' : color} strokeWidth="1.8" strokeLinecap="round"/>
+          </>
+        )}
+      </svg>
+    </span>
+  )
+}
+
+function ConfidenceRing({ value, shown }) {
+  const r = 46
+  const c = 2 * Math.PI * r
+  const pct = value == null ? 0 : Math.max(0, Math.min(100, shown))
+  return (
+    <div className="relative h-[112px] w-[112px] shrink-0" title="Probabilidad media que el modelo asignó a este resultado en los píxeles donde lo detectó">
+      <svg viewBox="0 0 112 112" aria-hidden="true" className="h-full w-full -rotate-90">
+        <defs>
+          <linearGradient id="agro-conf-ring" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#34d399"/>
+            <stop offset="100%" stopColor="#0b7a45"/>
+          </linearGradient>
+        </defs>
+        <circle cx="56" cy="56" r={r} fill="none" strokeWidth="11" className="stroke-[#dcefe3] dark:stroke-white/10"/>
+        <circle cx="56" cy="56" r={r} fill="none" stroke="url(#agro-conf-ring)" strokeWidth="11" strokeLinecap="round" strokeDasharray={`${(pct / 100) * c} ${c}`}/>
+      </svg>
+      <div className="absolute inset-0 grid place-items-center text-center">
+        <div>
+          <p className="font-[Manrope,Inter,sans-serif] text-[23px] font-extrabold leading-none text-[#0b5c3a] dark:text-emerald-300">{value == null ? '—' : `${shown}%`}</p>
+          <p className="mt-1 text-[10.5px] font-semibold text-[#1d2640] dark:text-slate-300">Confianza</p>
+        </div>
+      </div>
+      <span className="sr-only">{value == null ? 'Confianza no disponible' : `Confianza del modelo: ${value} %`}</span>
+    </div>
+  )
+}
+
+function MiniStat({ tone, icon, label, value }) {
+  return (
+    <div className={`flex min-w-0 items-center gap-2 rounded-xl border px-2 py-1.5 ${tone.card}`}>
+      <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full [&>svg]:h-4 [&>svg]:w-4 ${tone.icon}`}>{icon}</span>
+      <span className="min-w-0">
+        <span className={`block truncate text-[10px] ${MUTED}`}>{label}</span>
+        <span className={`block truncate text-[13px] font-extrabold leading-tight ${tone.value}`}>{value}</span>
+      </span>
+    </div>
+  )
+}
+
+function DiagnosisCard({ result, isHealthy, resultKey, severity }) {
+  const meta = diseaseMeta(result.target_class)
+  const conf = result.model_confidence != null ? Math.round(Number(result.model_confidence)) : null
+  const area = Number(result.confidence ?? 0)
+  const shownConf = useCountUp(conf ?? 0, conf != null)
+  const shownArea = useCountUp(Math.round(area * 10), area > 0) / 10
+  const nombre = isHealthy ? 'Cultivo sano' : meta.label
+  const corto = (RESULT_STYLE[resultKey]?.short ?? meta.short).toLowerCase()
+  const fuerte = (txt) => <strong className="text-[#0b8a4b] dark:text-emerald-400">{txt}</strong>
+  return (
+    <section className="relative flex min-w-0 flex-col overflow-hidden rounded-xl border border-[#d6eedd] bg-linear-to-br from-[#f2fbf5] via-white to-[#eaf7ee] px-4 pb-3.5 pt-3 shadow-[0_6px_18px_-14px_rgba(15,40,30,0.28)] dark:border-[#1e3048] dark:from-[#162032] dark:via-[#162032] dark:to-[#12281f]">
+      <header className="flex items-center gap-2.5">
+        <span className={ICON_BADGE}><IcoTrendUp/></span>
+        <h3 className={`text-[14px] ${PARCEL_TITLE}`}>Diagnóstico</h3>
+      </header>
+      <div className="mt-3 flex flex-wrap items-center gap-4">
+        <div className="flex min-w-[220px] flex-1 items-start gap-3">
+          <ResultBadgeIcon resultKey={resultKey}/>
+          <div className="min-w-0">
+            <p className="font-[Manrope,Inter,sans-serif] text-[22px] font-extrabold leading-tight text-[#0b1226] dark:text-white">{nombre}</p>
+            <p className="mt-1.5 text-[11.5px] leading-snug text-[#334155] dark:text-slate-300">
+              {isHealthy ? (
+                <>No se detectan síntomas de enfermedad en la hoja{conf != null && <> (confianza {fuerte(`${conf}%`)})</>}.</>
+              ) : (
+                <>Se detecta presencia de {corto} en la hoja{conf != null && <> con un {fuerte(`${conf}%`)} de confianza</>}.</>
+              )}
+            </p>
+            {!isHealthy && <SeverityScale pct={area} className="mt-2.5 max-w-[280px]"/>}
+          </div>
+        </div>
+        <ConfidenceRing value={conf} shown={shownConf}/>
+      </div>
+      <div className="mt-auto grid gap-2 pt-3 sm:grid-cols-3">
+        <MiniStat tone={TONES.base} icon={<IcoLeaf/>} label="Área afectada" value={isHealthy ? '0%' : `≈ ${shownArea.toFixed(1)}%`}/>
+        <MiniStat tone={TONES[severity] ?? TONES.base} icon={<IcoBars/>} label="Severidad" value={severity}/>
+        <MiniStat tone={TONES.base} icon={<IcoPlant/>} label="Cultivo" value="Maíz"/>
+      </div>
+    </section>
+  )
+}
+
+function GradCamCard({ xai, isHealthy }) {
+  const [zoom, setZoom] = useState(false)
+  const alt = 'Mapa de calor: zonas de la hoja en las que se fijó el modelo para el diagnóstico'
+  const leyenda = (claro) => (
+    <div className="flex gap-2.5 self-stretch py-1">
+      <span aria-hidden="true" className={`rounded-full ${claro ? 'w-3' : 'w-2.5'}`} style={{ background: TURBO }}/>
+      <span className={`flex flex-col justify-between leading-tight ${claro ? 'text-[11.5px] text-white/85' : `text-[10px] ${MUTED}`}`}>
+        <span>Mayor<br/>atención</span>
+        <span>Menor<br/>atención</span>
+      </span>
+    </div>
+  )
+  return (
+    <section className={`${PARCEL_CARD} flex min-w-0 flex-col px-4 pb-3.5 pt-3`}>
+      <header className="flex items-center gap-2.5">
+        <span className={ICON_BADGE}><IcoTarget/></span>
+        <h3 className={`text-[13.5px] ${PARCEL_TITLE}`}>Mapa de calor (Grad-CAM)</h3>
+      </header>
+      {xai ? (
+        <div className="mt-3 flex flex-1 items-center gap-4">
+          <div className="relative aspect-square w-[52%] max-w-[190px] shrink-0 overflow-hidden rounded-[10px] bg-[#0f1a14] ring-1 ring-black/5 dark:ring-white/10">
+            <ZoomTrigger label="mapa de calor" onOpen={() => setZoom(true)}>
+              <img src={xai} alt={alt} className="h-full w-full object-contain"/>
+            </ZoomTrigger>
+          </div>
+          {leyenda(false)}
+        </div>
+      ) : (
+        <p className={`mt-3 text-[11.5px] ${MUTED}`}>El mapa de calor no está disponible para este análisis.</p>
+      )}
+      <p className={`mt-2.5 text-[10px] leading-snug ${MUTED}`}>
+        {isHealthy ? 'Zonas en las que el modelo se apoyó para decidir que la hoja está sana.' : 'Los colores cálidos marcan las zonas que más influyeron en el diagnóstico.'}
+      </p>
+      {zoom && xai && (
+        <ZoomOverlay label="Mapa de calor (Grad-CAM)" onClose={() => setZoom(false)}>
+          <div className="flex h-full w-full items-center justify-center gap-5">
+            <img src={xai} alt={alt} className="h-full max-w-[calc(100%-96px)] object-contain"/>
+            <div className="flex h-[55%]">{leyenda(true)}</div>
+          </div>
+        </ZoomOverlay>
+      )}
+    </section>
+  )
+}
+
+function RecsCard({ recs, hasMore, open, onToggle, isHealthy, onGoEnfermedades }) {
+  return (
+    <section className={`${PARCEL_CARD} flex min-w-0 flex-col px-4 pb-3.5 pt-3`}>
+      <header className="flex items-center gap-2.5">
+        <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#fdf3d4] text-[#b7791f] dark:bg-amber-400/15 dark:text-amber-300 [&>svg]:h-4 [&>svg]:w-4"><IcoBulb/></span>
+        <h3 className={`text-[13.5px] ${PARCEL_TITLE}`}>Recomendaciones</h3>
+      </header>
+      <ul className="mt-3 space-y-2.5">
+        {recs.slice(0, 3).map((r) => (
+          <li key={r.title} className="flex items-start gap-2.5 text-[11.5px] leading-snug text-[#1d2640] dark:text-slate-200"><CheckCircle/><span>{r.body}</span></li>
+        ))}
+      </ul>
+      <div className="mt-auto pt-3">
+        {hasMore ? (
+          <button type="button" onClick={onToggle} aria-expanded={open} aria-controls="detalle-tratamiento" className={BTN_DARK}>
+            {open ? 'Ocultar detalles' : 'Ver más recomendaciones'}
+            <span className={`transition-transform ${open ? 'rotate-90' : ''}`}><IcoArrow/></span>
+          </button>
+        ) : isHealthy && onGoEnfermedades ? (
+          <button type="button" onClick={onGoEnfermedades} className={BTN_DARK}>
+            Conocer las enfermedades del maíz
+            <IcoArrow/>
+          </button>
+        ) : null}
+      </div>
+    </section>
+  )
+}
+
+function RelatedHistoryCard({ history, savedId, resultKey, onGoHistorial }) {
+  const keyOf = (h) => resultKeyOf(h.enfermedad, h.estado === 'Sano')
+  const previos = history.filter((h) => h.id !== savedId).sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+  const mismos = previos.filter((h) => keyOf(h) === resultKey)
+  const item = mismos[0] ?? previos[0] ?? null
+  const st = item ? (RESULT_STYLE[keyOf(item)] ?? RESULT_STYLE.otro) : null
+  const etiqueta = resultKey === 'sano' ? 'sin enfermedad' : `con ${(RESULT_STYLE[resultKey]?.short ?? '').toLowerCase()}`
+  const ir = () => onGoHistorial?.('individual')
+  return (
+    <section className={`relative flex min-w-0 flex-col overflow-hidden ${PARCEL_CARD} px-4 pb-3.5 pt-3`}>
+      <img src={inicioHojas} alt="" aria-hidden="true" draggable="false" className="pointer-events-none absolute bottom-0 right-0 h-[60px] w-auto select-none dark:opacity-10"/>
+      <header className="relative flex flex-wrap items-center gap-x-2.5 gap-y-1">
+        <span className={ICON_BADGE}><IcoClock/></span>
+        <h3 className={`text-[13.5px] ${PARCEL_TITLE}`}>Historial relacionado</h3>
+        {onGoHistorial && (
+          <button type="button" onClick={ir} className="ml-auto inline-flex items-center gap-1.5 rounded-md text-[10.5px] font-semibold text-[#0b6b35] transition hover:text-[#02894b] hover:underline dark:text-emerald-400">
+            Ver historial
+            <IcoArrow/>
+          </button>
+        )}
+      </header>
+      {item ? (
+        <>
+          <p className={`relative mt-2.5 text-[10.5px] ${MUTED}`}>{mismos.length > 0 ? `Tu último análisis ${etiqueta}` : 'Tu análisis anterior'}</p>
+          <button
+            type="button"
+            onClick={ir}
+            aria-label={`${st.short}, ${fechaHora(item.fecha)}: ver en el historial`}
+            className="relative mt-1.5 flex w-full items-center gap-3 rounded-xl border border-[#e9eef1] bg-white/85 p-2 text-left shadow-[0_4px_14px_-12px_rgba(15,40,30,0.4)] transition hover:border-[#bfe3c9] hover:shadow-md dark:border-white/10 dark:bg-white/[0.04] dark:hover:border-emerald-400/30"
+          >
+            <span className="h-[78px] w-[78px] shrink-0 overflow-hidden rounded-lg bg-[#e3f2e6] dark:bg-white/5">
+              {(item.resultadoImage || item.imagen) && <img src={item.resultadoImage || item.imagen} alt="" loading="lazy" className="h-full w-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none' }}/>}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className={`block truncate text-[10.5px] ${MUTED}`}>Análisis · {fechaHora(item.fecha)}</span>
+              <span className={`mt-1.5 inline-flex h-[22px] max-w-full items-center gap-1 rounded-full px-2.5 text-[10.5px] font-semibold ${st.chip}`}>
+                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${st.icon}`}/>
+                <span className="truncate">{st.short}</span>
+              </span>
+              {keyOf(item) !== 'sano' && (
+                <span className="mt-1 block text-[10.5px] font-semibold text-[#1d2640] dark:text-slate-200">{Number(item.affectedPercent ?? 0).toFixed(1)} % afectado · {item.severidad}</span>
+              )}
+            </span>
+            <IcoChevronRight className="h-4 w-4 text-[#64748b] dark:text-slate-400"/>
+          </button>
+          {mismos.length > 1 && <p className={`relative mt-2 text-[10.5px] ${MUTED}`}>Tienes {mismos.length} análisis anteriores {etiqueta}.</p>}
+        </>
+      ) : (
+        <p className={`relative mt-3 text-[11.5px] ${MUTED}`}>Este es tu primer análisis: aquí aparecerán los anteriores para que compares.</p>
+      )}
+    </section>
+  )
+}
+
+function StepsCard({ icon, title, subtitle, steps }) {
+  return (
+    <section className={`${PARCEL_CARD} px-4 py-3.5`}>
+      <header className="flex items-center gap-2.5">
+        {icon}
+        <div className="min-w-0">
+          <h3 className={`text-[13.5px] ${PARCEL_TITLE}`}>{title}</h3>
+          <p className={`text-[10.5px] ${MUTED}`}>{subtitle}</p>
+        </div>
+      </header>
+      <ol className="mt-3 space-y-2">
+        {steps.map((s) => (
+          <li key={s.num} className={`flex gap-3 rounded-xl border p-3 ${s.alert ? 'border-red-200 bg-red-50 dark:border-red-400/25 dark:bg-red-500/10' : 'border-[#eef2f0] bg-[#fafcfb] dark:border-white/10 dark:bg-white/[0.03]'}`}>
+            <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[12px] font-black text-white ${s.alert ? 'bg-red-600' : 'bg-[#0b8a4b] dark:bg-emerald-600'}`}>{s.num}</span>
+            <div className="min-w-0">
+              <p className={`flex items-center gap-1.5 text-[12px] font-bold ${s.alert ? 'text-red-800 dark:text-red-200' : 'text-[#0b1226] dark:text-white'}`}>
+                <span aria-hidden="true">{s.icon}</span>{s.title}
+              </p>
+              <p className={`mt-0.5 text-[11px] leading-snug ${s.alert ? 'text-red-700 dark:text-red-200/90' : 'text-[#334155] dark:text-slate-300'}`}>{s.desc}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+// «Ver más recomendaciones»: todas las recomendaciones y el tratamiento químico detallado
+export function TreatmentDetails({ recs, chemData }) {
+  return (
+    <div className="space-y-3">
+      <section className={`${PARCEL_CARD} px-4 py-3.5`}>
+        <h3 className={`flex items-center gap-2.5 text-[14px] ${PARCEL_TITLE}`}>
+          <span className={ICON_BADGE}><IcoShield/></span>
+          Recomendaciones agronómicas
+        </h3>
+        <ol className="mt-3 grid gap-2.5 sm:grid-cols-2">
+          {recs.map((r, i) => (
+            <li key={r.title} className="flex gap-3 rounded-xl border border-[#eef2f0] bg-[#fafcfb] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#0b8a4b] text-[11px] font-black text-white dark:bg-emerald-600">{i + 1}</span>
+              <div className="min-w-0">
+                <p className="text-[12px] font-bold text-[#0b1226] dark:text-white">{r.title}</p>
+                <p className="mt-0.5 text-[11.5px] leading-snug text-[#334155] dark:text-slate-300">{r.body}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      {chemData && (
+        <>
+          <section className={`${PARCEL_CARD} overflow-hidden`}>
+            <header className="flex items-center gap-3 px-4 py-3">
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-800 dark:bg-amber-400/15 dark:text-amber-300 [&>svg]:h-4 [&>svg]:w-4"><IcoFlask/></span>
+              <div className="min-w-0">
+                <h3 className={`text-[14px] ${PARCEL_TITLE}`}>Tratamiento químico recomendado</h3>
+                <p className={`text-[11px] ${MUTED}`}>Agente causal: <i>{chemData.pathogen}</i></p>
+              </div>
+            </header>
+            <p className="mx-4 rounded-lg bg-[#fdf7ec] px-3 py-2 text-[11.5px] leading-snug text-[#7a4b0c] dark:bg-amber-400/10 dark:text-amber-100">{chemData.description}</p>
+            <div className="grid gap-2.5 p-4 lg:grid-cols-3">
+              {chemData.products.map((p) => (
+                <article key={p.name} className="flex flex-col rounded-xl border border-[#eef2f0] bg-[#fafcfb] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                  <p className="text-[12.5px] font-bold text-[#0b1226] dark:text-white">{p.name}</p>
+                  <p className={`text-[10.5px] ${MUTED}`}>{p.brands}</p>
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    <span className="inline-flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold text-[#334155] ring-1 ring-black/5 dark:bg-white/10 dark:text-slate-200 dark:ring-white/10">
+                      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full" style={{ background: p.color }}/>
+                      {p.category}
+                    </span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-600 dark:bg-white/10 dark:text-slate-300">{p.type}</span>
+                  </div>
+                  <dl className="mt-2.5 grid grid-cols-3 gap-1.5">
+                    {[['Por 200 L', p.dose200L], ['Por litro', p.dosePer1L], ['Frecuencia', p.frequency]].map(([k, v]) => (
+                      <div key={k} className="rounded-lg border border-[#e9eef1] bg-white px-1.5 py-1.5 text-center dark:border-white/10 dark:bg-white/[0.04]">
+                        <dt className={`text-[9px] font-semibold uppercase tracking-wide ${MUTED}`}>{k}</dt>
+                        <dd className="mt-0.5 text-[11px] font-bold text-[#0b1226] dark:text-white">{v}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className={`mt-2 text-[10.5px] italic leading-snug ${MUTED}`}>{p.note}</p>
+                </article>
+              ))}
+            </div>
+            <div className="mx-4 mb-4 rounded-xl border border-[#dcefe3] bg-[#f3faf6] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+              <p className="text-[12.5px] font-bold text-[#0b1226] dark:text-white">{chemData.mix.title}</p>
+              <p className={`text-[10.5px] ${MUTED}`}>{chemData.mix.subtitle}</p>
+              <ol className="mt-2 space-y-1.5">
+                {chemData.mix.components.map((c, i) => (
+                  <li key={c.product} className="flex items-center justify-between gap-3 rounded-lg border border-[#e3efe7] bg-white px-3 py-1.5 dark:border-white/10 dark:bg-white/[0.04]">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full text-[10px] font-black text-white" style={{ background: c.color }}>{i + 1}</span>
+                      <span className="text-[11.5px] font-medium text-[#1d2640] dark:text-slate-200">{c.product}</span>
+                    </span>
+                    <span className="shrink-0 text-[11.5px] font-bold text-[#0b1226] dark:text-white">{c.amount}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </section>
+          <div className="grid items-start gap-3 xl:grid-cols-2">
+            <StepsCard
+              icon={<span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-sky-100 text-sky-800 dark:bg-sky-400/15 dark:text-sky-300 [&>svg]:h-4 [&>svg]:w-4"><IcoBeaker/></span>}
+              title="Preparación de la mezcla"
+              subtitle="Paso a paso para un tanque de 200 litros"
+              steps={MIXING_STEPS}
+            />
+            <StepsCard
+              icon={<span className={`${ICON_BADGE} h-8 w-8`}><IcoSpray/></span>}
+              title="Procedimiento de fumigación"
+              subtitle="Guía para una aplicación segura y efectiva"
+              steps={FUMIGATION_STEPS}
+            />
+          </div>
+          <p className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] leading-snug text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">
+            <span aria-hidden="true">⚠️</span>
+            Las dosis indicadas son de referencia. Consulta siempre la etiqueta oficial del producto y el criterio de un ingeniero agrónomo antes de aplicar. El uso inadecuado de plaguicidas puede dañar el cultivo, la salud y el medio ambiente.
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
 
 // El modo ('individual' | 'parcela') lo elige el submenú "Analizar" de la barra lateral (App.jsx)
-export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [], enfermedades = [], mode = 'individual', preselectedParcelaId = null, showPerformance = false }) {
-  const { isDark } = useTheme()
+export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [], enfermedades = [], mode = 'individual', preselectedParcelaId = null, showPerformance = false, onGoHistorial, onGoEnfermedades }) {
   const [file, setFile]               = useState(null)
   const [preview, setPreview]         = useState('')
   const [previewDataUrl, setPreviewDataUrl] = useState('')
@@ -405,24 +1180,33 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
   const [maskBase64, setMaskBase64]   = useState(null)
   const [timings, setTimings]         = useState(null)
   const modelLoadMs                   = useModelLoadTime()
-  const [showXai, setShowXai]         = useState(false)
   const [exportingPdf, setExportingPdf] = useState(false)
-
-  const displayConf = useCountUp(result?.confidence ?? 0, !!result && !loading)
-  const isHealthy   = result?.target_class === 'Fondo_y_Sana' || result?.target_class === 'Fondo'
-  const disease     = result ? DISEASES[result.target_class] : null
-  const recs        = result ? recommendationsFor(result.target_class) : []
-  const severity    = result ? severityOf(result.target_class, result.confidence) : null
-  const chemData    = result ? (CHEMICAL_TREATMENTS[result.target_class] ?? null) : null
-
+  const [savedId, setSavedId]         = useState(null)
+  const [showDetails, setShowDetails] = useState(false)
+  const inputRef      = useRef(null)
+  const detailsRef    = useRef(null)
   const previewUrlRef = useRef('')
 
+  const isHealthy  = isHealthyClass(result?.target_class)
+  const disease    = result ? DISEASES[result.target_class] : null
+  const recs       = result ? recommendationsFor(result.target_class) : []
+  const severity   = result ? severityOf(result.target_class, result.confidence) : null
+  const chemData   = result ? (CHEMICAL_TREATMENTS[result.target_class] ?? null) : null
+  const resultKey  = result ? resultKeyOf(result.target_class, isHealthy) : null
+  const showResult = !!result && !loading
+  const stepIndex  = showResult ? 2 : file ? 1 : 0
+
+  useEffect(() => () => { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current) }, [])
   useEffect(() => {
-    return () => { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current) }
-  }, [])
+    if (showDetails) detailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [showDetails])
 
   const applyFile = (f) => {
-    if (!f?.type.startsWith('image/')) return
+    if (!f || loading) return
+    if (!f.type?.startsWith('image/')) {
+      setError('El archivo no es una imagen. Usa una foto JPG, PNG o WEBP.')
+      return
+    }
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current)
     const url = URL.createObjectURL(f)
     previewUrlRef.current = url
@@ -430,9 +1214,33 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
     setPreview(url)
     setResult(null)
     setMaskBase64(null)
-    setShowXai(false)
+    setTimings(null)
+    setSavedId(null)
+    setShowDetails(false)
     setError('')
     fileToDataUrl(f).then(setPreviewDataUrl).catch(() => setPreviewDataUrl(''))
+  }
+
+  const pickFile = () => { if (!loading) inputRef.current?.click() }
+
+  const dropProps = {
+    onDragOver: (e) => { e.preventDefault(); if (!loading) setDragging(true) },
+    onDragLeave: (e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false) },
+    onDrop: (e) => { e.preventDefault(); setDragging(false); applyFile(e.dataTransfer.files?.[0]) },
+  }
+
+  const resetAll = () => {
+    if (previewUrlRef.current) { URL.revokeObjectURL(previewUrlRef.current); previewUrlRef.current = '' }
+    setFile(null)
+    setPreview('')
+    setPreviewDataUrl('')
+    setResult(null)
+    setMaskBase64(null)
+    setTimings(null)
+    setSavedId(null)
+    setShowDetails(false)
+    setError('')
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
   const handleExportPDF = async () => {
@@ -453,23 +1261,6 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
     }
   }
 
-  const handleDrop = useCallback((e) => {
-    e.preventDefault()
-    setDragging(false)
-    applyFile(e.dataTransfer.files?.[0])
-  }, [])
-
-  const clearFile = (e) => {
-    e.stopPropagation()
-    if (previewUrlRef.current) { URL.revokeObjectURL(previewUrlRef.current); previewUrlRef.current = '' }
-    setFile(null)
-    setPreview('')
-    setResult(null)
-    setMaskBase64(null)
-    setShowXai(false)
-    setError('')
-  }
-
   const analyze = async () => {
     if (!file) return
     if (file.size > 20 * 1024 * 1024) {
@@ -481,7 +1272,8 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
     setResult(null)
     setMaskBase64(null)
     setTimings(null)
-    setShowXai(false)
+    setSavedId(null)
+    setShowDetails(false)
     setStep(0)
 
     try {
@@ -519,16 +1311,27 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
       const enfermedadRow = (enfermedades || []).find((e) => Number(e.clase_idx) === targetIdx)
       const diseaseId     = enfermedadRow?.id ?? DISEASE_IDS[data.target_class]
       const xaiDataUrl    = data.xai_base64_png ? `data:image/png;base64,${data.xai_base64_png}` : null
+      // Imagen de salida (original + área afectada + caja + etiqueta) para mostrarla luego en Inicio
+      const resultadoUrl  = isHealthyClass(data.target_class) ? null : await annotatedImageDataUrl({
+        originalSrc:    imageDataUrl,
+        maskBase64:     segResponse?.data?.mask_base64_png,
+        targetClassId:  targetIdx,
+        label:          DISEASES[data.target_class]?.label ?? data.target_class,
+        confidence:     data.model_confidence ?? data.confidence,
+        highlightColor: DISEASES[data.target_class]?.barColor ?? '#ef4444',
+      }).catch(() => null)
 
       const savedResponse = await createAnalisis({
         imagen_url:     imageDataUrl,
         grad_cam_url:   xaiDataUrl,
+        resultado_url:  resultadoUrl,
         afectacion_pct: data.confidence,
         severidad:      severityKey(data.confidence),
         enfermedad_id:  diseaseId,
       })
 
       const saved = mapAnalysisResponse(savedResponse.data)
+      setSavedId(saved.id)
       if (typeof onHistoryChange === 'function') onHistoryChange([saved, ...history])
       if (typeof onAnalysisSaved === 'function') onAnalysisSaved()
     } catch (e) {
@@ -548,542 +1351,89 @@ export default function Analizar({ onHistoryChange, onAnalysisSaved, history = [
   return (
     <div className="fade-up relative isolate space-y-5">
       <PageGlow />
-      {mode === 'parcela'
-        ? <PageHero title="Analiza" highlight="tu parcela" subtitle="Muestreo sistemático de un lote completo con IA" />
-        : <PageHero title="Analiza" highlight="tus cultivos" subtitle="Detecta enfermedades con el poder de la IA" />}
 
       {/* ── Parcela completa ─────────────────────────────────────── */}
-      {mode === 'parcela' && <AnalizarParcela preselectedParcelaId={preselectedParcelaId} />}
+      {mode === 'parcela' && <AnalizarParcela preselectedParcelaId={preselectedParcelaId} onGoHistorial={onGoHistorial} onGoEnfermedades={onGoEnfermedades} />}
 
       {/* ── Análisis individual ──────────────────────────────────── */}
-      {mode !== 'parcela' && <>
+      {mode !== 'parcela' && (
+        <div className="flex flex-col gap-3.5">
+          <IndividualHero/>
+          <StepBar current={stepIndex} steps={INDIVIDUAL_STEPS}/>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            aria-label="Seleccionar imagen del cultivo"
+            className="hidden"
+            onChange={(e) => { applyFile(e.target.files?.[0]); e.target.value = '' }}
+          />
 
-      {/* ── Tarjeta de carga ──────────────────────────────────────── */}
-      <section className="overflow-hidden rounded-3xl border border-white/70 bg-white/80 shadow-[0_12px_40px_-20px_rgba(15,23,42,0.25)] backdrop-blur-xl dark:border-white/10 dark:bg-white/[0.04]">
-        <div className="flex items-center gap-4 px-5 pt-5 sm:px-6 sm:pt-6">
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-emerald-200 bg-emerald-50 text-emerald-600 shadow-sm dark:border-emerald-400/25 dark:bg-emerald-400/10 dark:text-emerald-300">
-            <IcoImage />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">Cargar imagen UAV</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400">Fotografía aérea de cultivo de maíz · JPG, PNG, WebP</p>
-          </div>
-          {file && !loading ? (
-            <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700 dark:border-emerald-400/25 dark:bg-emerald-400/10 dark:text-emerald-300">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              Lista para analizar
-            </span>
-          ) : (
-            <span
-              aria-hidden="true"
-              className="hidden h-3 w-16 shrink-0 rounded-sm opacity-80 sm:block"
-              style={{ background: 'repeating-linear-gradient(-45deg, #22c55e 0 6px, transparent 6px 11px)' }}
-            />
-          )}
-        </div>
-
-        <div className="p-4 sm:p-5">
-          <div
-            onDrop={handleDrop}
-            onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-            onDragLeave={() => setDragging(false)}
-            className={`group relative cursor-pointer select-none overflow-hidden rounded-2xl border-2 border-dashed transition-all duration-200 ${
-              dragging
-                ? 'border-emerald-500 bg-emerald-50 shadow-[0_0_0_4px_rgba(16,185,129,0.15)] dark:bg-emerald-400/10'
-                : preview
-                  ? 'border-transparent bg-slate-950'
-                  : 'border-emerald-300/80 bg-linear-to-br from-emerald-50/80 via-white/60 to-green-50/80 hover:border-emerald-400 dark:border-emerald-400/30 dark:from-emerald-400/[0.07] dark:via-transparent dark:to-emerald-400/[0.04]'
-            }`}
-            style={{ minHeight: preview ? 300 : 280 }}
-          >
-            <input
-              type="file"
-              accept="image/*"
-              aria-label="Seleccionar imagen del cultivo"
-              onChange={(e) => applyFile(e.target.files?.[0])}
-              className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
-            />
-
-            {preview ? (
-              <>
-                <img
-                  src={preview}
-                  alt="Vista previa de la imagen"
-                  className="mx-auto max-h-[380px] w-full object-contain transition-opacity duration-300"
-                  style={{ opacity: loading ? 0.4 : 1 }}
+          {!showResult ? (
+            <>
+              <div className="grid gap-3 xl:grid-cols-[1.4fr_1fr]">
+                <UploadPanel
+                  file={file}
+                  preview={preview}
+                  sizeLabel={fileSizeLabel}
+                  dragging={dragging}
+                  loading={loading}
+                  error={error}
+                  onPick={pickFile}
+                  onAnalyze={analyze}
+                  dropProps={dropProps}
                 />
-                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex items-center justify-between bg-linear-to-t from-slate-950/80 to-transparent px-4 py-3">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <IcoImage className="h-4 w-4 shrink-0 text-slate-400" />
-                    <p className="max-w-[200px] truncate text-xs font-medium text-slate-300">{file?.name}</p>
-                    <span className="text-xs text-slate-500">{fileSizeLabel}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={clearFile}
-                    className="pointer-events-auto z-30 flex items-center gap-1 rounded-lg border border-white/20 bg-white/10 px-2.5 py-1 text-xs font-semibold text-white backdrop-blur-sm transition hover:bg-white/20"
-                  >
-                    Cambiar
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <DecorLeaf className="absolute -bottom-6 -left-6 h-20 w-20 text-emerald-300/40 sm:h-36 sm:w-36 dark:text-emerald-400/10" />
-                <DecorLeaf flip className="absolute -bottom-8 -right-6 h-24 w-24 text-emerald-300/40 sm:h-44 sm:w-44 dark:text-emerald-400/10" />
-                <div className="relative flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
-                  <UploadIllustration />
-                  <p className="mt-3 text-xl font-extrabold text-slate-900 dark:text-white">
-                    {dragging ? '¡Suelta la imagen aquí!' : 'Arrastra tu imagen aquí'}
-                  </p>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">o haz clic para seleccionar archivos</p>
-                  <div className="mt-3 flex items-center gap-3">
-                    {['JPG', 'PNG', 'WebP'].map((f) => (
-                      <span key={f} className="rounded-full border border-emerald-300 bg-emerald-50/80 px-4 py-1 text-xs font-bold text-emerald-700 dark:border-emerald-400/30 dark:bg-emerald-400/10 dark:text-emerald-300">
-                        {f}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-
-        {(file || error) && (
-          <div className="flex flex-wrap items-center justify-end gap-3 px-4 pb-4 sm:px-5">
-            {error && (
-              <p className="flex-1 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-600 dark:border-red-400/20 dark:bg-red-500/10 dark:text-red-300">
-                {error}
-              </p>
-            )}
-            <button
-              type="button"
-              disabled={!file || loading}
-              onClick={analyze}
-              className={`inline-flex items-center gap-2 rounded-xl px-7 py-3 text-sm font-bold transition-all duration-200 active:scale-95 ${
-                !file || loading
-                  ? 'cursor-not-allowed bg-slate-100 text-slate-400 dark:bg-white/5 dark:text-slate-500'
-                  : 'bg-linear-to-r from-emerald-500 to-green-600 text-white shadow-lg shadow-emerald-600/30 hover:brightness-105'
-              }`}
-            >
-              {loading ? (
-                <>
-                  <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-                  </svg>
-                  Analizando…
-                </>
-              ) : (
-                <>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
-                    <path d="M3 9V6a3 3 0 013-3h3M3 15v3a3 3 0 003 3h3M21 9V6a3 3 0 00-3-3h-3M21 15v3a3 3 0 01-3 3h-3"/>
-                    <rect x="7" y="7" width="10" height="10" rx="2"/>
-                  </svg>
-                  Analizar imagen
-                </>
+                {loading ? <ProcessingCard step={step}/> : file ? <PhotoTipsCard/> : <QueAnalizarCard onGoEnfermedades={onGoEnfermedades}/>}
+              </div>
+              <RecentAnalyses history={history} onGoHistorial={onGoHistorial}/>
+            </>
+          ) : (
+            <>
+              {error && (
+                <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[11.5px] text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">
+                  El análisis se completó, pero no se pudo guardar en tu historial: {error}
+                </p>
               )}
-            </button>
-          </div>
-        )}
-
-        <div className="mx-4 mb-4 grid gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4 sm:mx-5 sm:mb-5 sm:grid-cols-3 sm:gap-0 sm:divide-x sm:divide-emerald-200/70 dark:border-white/10 dark:bg-white/[0.03] dark:sm:divide-white/10">
-          {UPLOAD_FEATURES.map(({ text, icon }) => (
-            <div key={text} className="flex items-center gap-3 sm:justify-center sm:px-4">
-              <svg viewBox="0 0 24 24" aria-hidden="true" className="h-7 w-7 shrink-0 text-emerald-600 dark:text-emerald-400">{icon}</svg>
-              <p className="text-sm font-semibold leading-snug text-slate-700 dark:text-slate-200">{text}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ── Loading steps ─────────────────────────────────────────── */}
-      {loading && (
-        <div className={`rounded-2xl border p-6 shadow-sm fade-in ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-          <div className="flex items-center gap-3 mb-6">
-            <div className="relative w-8 h-8 flex-shrink-0">
-              <div className="absolute inset-0 rounded-full border-[3px] border-slate-100"/>
-              <div className="absolute inset-0 rounded-full border-[3px] border-transparent border-t-emerald-500 animate-spin"/>
-            </div>
-            <div>
-              <p className="font-semibold text-slate-800 text-sm">Procesando con inteligencia artificial</p>
-              <p className="text-xs text-slate-400">Segmentación semántica + Grad-CAM XAI</p>
-            </div>
-          </div>
-
-          <div className="space-y-2.5">
-            {STEPS.map((label, i) => {
-              const done    = i < step
-              const active  = i === step
-              const pending = i > step
-              return (
-                <div
-                  key={i}
-                  className="flex items-center gap-3 rounded-xl px-4 py-3 transition-all duration-300"
-                  style={{
-                    background: active ? '#f0fdf4' : done ? '#fafafa' : 'transparent',
-                    border: active ? '1px solid #bbf7d0' : '1px solid transparent',
-                  }}
-                >
-                  <div
-                    className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300"
-                    style={{
-                      background: done ? '#22c55e' : active ? '#dcfce7' : '#f1f5f9',
-                      border: active ? '1.5px solid #86efac' : 'none',
-                    }}
-                  >
-                    {done ? (
-                      <span className="text-white"><CheckIcon /></span>
-                    ) : active ? (
-                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"/>
-                    ) : (
-                      <span className="w-2 h-2 rounded-full bg-slate-300"/>
-                    )}
-                  </div>
-                  <span
-                    className="text-sm font-medium transition-colors duration-300"
-                    style={{ color: done ? '#64748b' : active ? '#15803d' : '#94a3b8' }}
-                  >
-                    {label}
-                  </span>
-                  {active && (
-                    <span className="ml-auto text-xs font-semibold text-emerald-600 bg-emerald-50 rounded-full px-2 py-0.5">
-                      En curso
-                    </span>
-                  )}
-                  {done && (
-                    <span className="ml-auto text-xs text-slate-400">Completado</span>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ── Results ───────────────────────────────────────────────── */}
-      {result && !loading && (
-        <div className="space-y-4 fade-up">
-
-          {/* Diagnosis banner */}
-          {disease && (
-            <div
-              className="rounded-2xl p-6 shadow-sm"
-              style={{
-                background: `linear-gradient(135deg, ${disease.gradFrom} 0%, ${disease.gradTo} 100%)`,
-                border: `1px solid ${disease.border}`,
-              }}
-            >
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
-                  <div
-                    className="w-16 h-16 rounded-2xl flex items-center justify-center flex-shrink-0"
-                    style={{ background: 'rgba(255,255,255,0.6)', border: `1.5px solid ${disease.border}` }}
-                  >
-                    <span style={{ color: disease.color }}>
-                      {isHealthy ? <HealthyIcon /> : <DiseaseIcon />}
-                    </span>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-0.5">Diagnóstico</p>
-                    <p className="text-3xl font-black text-slate-900 leading-tight">{disease.label}</p>
-                    <div className="flex items-center gap-2 mt-1.5">
-                      <span
-                        className="rounded-full px-2.5 py-0.5 text-xs font-bold"
-                        style={{
-                          background: severity === 'Grave' ? '#fef2f2' : severity === 'Moderada' ? '#fffbeb' : '#f0fdf4',
-                          color:      severity === 'Grave' ? '#b91c1c' : severity === 'Moderada' ? '#92400e' : '#15803d',
-                          border:     `1px solid ${severity === 'Grave' ? '#fecaca' : severity === 'Moderada' ? '#fde68a' : '#bbf7d0'}`,
-                        }}
-                      >
-                        {isHealthy ? 'Sano' : `Severidad ${severity}`}
-                      </span>
-                      {!isHealthy && result.model_confidence !== undefined && (
-                        <span
-                          className="rounded-full px-2.5 py-0.5 text-xs font-bold"
-                          style={{ background: 'rgba(255,255,255,0.6)', color: disease.color, border: `1px solid ${disease.border}` }}
-                          title="Probabilidad promedio que el modelo asignó a esta clase en los píxeles que diagnosticó como tal"
-                        >
-                          Confianza del modelo {Math.round(result.model_confidence)}%
-                        </span>
-                      )}
-                      <span className="text-xs text-slate-500">· Cultivo de Maíz</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="text-right">
-                  <p className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-0.5">Área afectada</p>
-                  <p className="font-black leading-none" style={{ fontSize: 52, color: disease.color }}>
-                    {displayConf}<span className="text-2xl font-bold">%</span>
-                  </p>
-                </div>
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1.33fr)_minmax(0,1fr)]">
+                <ResultImagesCard
+                  preview={preview}
+                  maskBase64={maskBase64}
+                  result={result}
+                  isHealthy={isHealthy}
+                  disease={disease}
+                  exporting={exportingPdf}
+                  onExport={handleExportPDF}
+                  onNew={resetAll}
+                />
+                <DiagnosisCard result={result} isHealthy={isHealthy} resultKey={resultKey} severity={severity}/>
               </div>
-
-              <div className="mt-5">
-                <div className="h-3 w-full rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.55)' }}>
-                  <div
-                    className="h-full rounded-full transition-all duration-[1100ms] ease-out"
-                    style={{ width: `${displayConf}%`, background: disease.barColor }}
-                  />
-                </div>
-                <div className="flex justify-between mt-1.5 text-xs text-slate-400">
-                  <span>0%</span>
-                  <span>Porcentaje del área de la imagen con síntomas</span>
-                  <span>100%</span>
-                </div>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                <GradCamCard xai={result.xai_base64_png ? `data:image/png;base64,${result.xai_base64_png}` : null} isHealthy={isHealthy}/>
+                <RecsCard
+                  recs={recs}
+                  hasMore={recs.length > 3 || !!chemData}
+                  open={showDetails}
+                  onToggle={() => setShowDetails((v) => !v)}
+                  isHealthy={isHealthy}
+                  onGoEnfermedades={onGoEnfermedades}
+                />
+                <RelatedHistoryCard history={history} savedId={savedId} resultKey={resultKey} onGoHistorial={onGoHistorial}/>
               </div>
-            </div>
-          )}
-
-          {/* Resultado visual: una sola imagen con el área afectada resaltada */}
-          <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-            <div className="px-5 pt-5 pb-4">
-              <p className="font-bold text-slate-900 text-sm">Resultado del análisis</p>
-            </div>
-
-            <div className="px-5 pb-5">
-              <div className="aspect-video rounded-xl overflow-hidden bg-slate-900 border border-slate-200 relative">
-                {isHealthy ? (
-                  <img src={preview} alt="Imagen analizada" className="w-full h-full object-contain"/>
-                ) : (
-                  <AnnotatedResultImage
-                    originalSrc={preview}
-                    maskBase64={maskBase64}
-                    targetClassId={Number(result.target_class_id)}
-                    label={disease?.label ?? result.target_class}
-                    confidence={result.model_confidence ?? result.confidence}
-                    highlightColor={disease?.barColor ?? '#ef4444'}
-                  />
-                )}
-                <div className="absolute top-3 left-3">
-                  <span className="rounded-lg bg-slate-950/60 backdrop-blur-sm border border-white/10 px-3 py-1 text-xs font-semibold text-white">
-                    Imagen analizada UAV
-                  </span>
+              {showDetails && (
+                <div ref={detailsRef} id="detalle-tratamiento" className="scroll-mt-20">
+                  <TreatmentDetails recs={recs} chemData={chemData}/>
                 </div>
-              </div>
-            </div>
-
-            {!isHealthy && result.xai_base64_png && (
-              <div className="px-5 pb-5">
-                <button
-                  type="button"
-                  onClick={() => setShowXai((v) => !v)}
-                  className="text-xs font-semibold text-slate-500 hover:text-slate-700 flex items-center gap-1.5"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`w-3.5 h-3.5 transition-transform ${showXai ? 'rotate-90' : ''}`}>
-                    <path d="M9 18l6-6-6-6"/>
-                  </svg>
-                  Ver explicabilidad (Grad-CAM XAI)
-                </button>
-                {showXai && (
-                  <div className="mt-3">
-                    <div className="aspect-video rounded-xl overflow-hidden bg-slate-100 border border-slate-200">
-                      <img src={`data:image/png;base64,${result.xai_base64_png}`} alt="Grad-CAM" className="w-full h-full object-cover"/>
-                    </div>
-                    <div className="mt-2 rounded-xl bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-500 flex items-start gap-2">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" className="w-4 h-4 flex-shrink-0 mt-0.5">
-                        <circle cx="12" cy="12" r="10"/><path d="M12 8v4m0 4h.01"/>
-                      </svg>
-                      <span>El mapa Grad-CAM muestra las zonas donde el modelo concentró su atención para el diagnóstico. Las áreas en colores cálidos (rojo/naranja) indican mayor relevancia.</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Recommendations */}
-          {recs.length > 0 && (
-            <div className={`rounded-2xl border shadow-sm p-6 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-              <div className="flex items-center gap-2 mb-5">
-                <div className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="#15803d" strokeWidth="2.5" className="w-3.5 h-3.5">
-                    <path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-                  </svg>
-                </div>
-                <h3 className="font-bold text-slate-900 text-sm">Recomendaciones agronómicas</h3>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {recs.map((rec, i) => (
-                  <div
-                    key={i}
-                    className="rounded-xl border border-slate-100 bg-slate-50 p-4 flex items-start gap-3 hover:border-slate-200 hover:bg-white transition-colors duration-150"
-                  >
-                    <span
-                      className="w-6 h-6 rounded-full flex items-center justify-center text-xs font-black flex-shrink-0 mt-0.5"
-                      style={{ background: disease?.barColor ?? '#22c55e', color: 'white' }}
-                    >
-                      {i + 1}
-                    </span>
-                    <div>
-                      <p className="text-xs font-bold text-slate-700 mb-0.5">{rec.title}</p>
-                      <p className="text-xs text-slate-500 leading-relaxed">{rec.body}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* ── Tratamiento químico ─────────────────────────────────── */}
-          {!isHealthy && chemData && (
-            <div className="space-y-4">
-
-              {/* Productos recomendados */}
-              <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-                <div className={`px-6 py-4 border-b flex items-center gap-3 ${isDark ? 'border-[#1e3048]' : 'border-slate-100'}`}>
-                  <div className="w-7 h-7 rounded-lg bg-amber-100 flex items-center justify-center flex-shrink-0">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#b45309" strokeWidth="2" className="w-4 h-4"><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/></svg>
-                  </div>
-                  <div>
-                    <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Tratamiento químico recomendado</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">Agente causal: <span className="italic">{chemData.pathogen}</span></p>
-                  </div>
-                </div>
-
-                <div className={`px-6 py-3 text-xs leading-relaxed ${isDark ? 'bg-[#1a2a3a] text-slate-300' : 'bg-amber-50 text-amber-900'}`}>
-                  {chemData.description}
-                </div>
-
-                <div className="p-5 space-y-3">
-                  {chemData.products.map((p, i) => (
-                    <div key={i} className={`rounded-xl border p-4 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
-                      <div className="flex items-start justify-between gap-2 flex-wrap">
-                        <div>
-                          <p className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{p.name}</p>
-                          <p className="text-xs text-slate-400 mt-0.5">{p.brands}</p>
-                        </div>
-                        <div className="flex gap-2 flex-wrap">
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: p.color + '22', color: p.color, border: `1px solid ${p.color}44` }}>{p.category}</span>
-                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${isDark ? 'bg-[#0e1929] text-slate-300 border border-[#2a3d55]' : 'bg-white text-slate-500 border border-slate-200'}`}>{p.type}</span>
-                        </div>
-                      </div>
-                      <div className="mt-3 grid grid-cols-3 gap-2">
-                        {[
-                          { label: 'Por 200 L', value: p.dose200L },
-                          { label: 'Por litro', value: p.dosePer1L },
-                          { label: 'Frecuencia', value: p.frequency },
-                        ].map((d, j) => (
-                          <div key={j} className={`rounded-lg border p-2 text-center ${isDark ? 'bg-[#0e1929] border-[#2a3d55]' : 'bg-white border-slate-200'}`}>
-                            <p className="text-[10px] text-slate-400 uppercase tracking-wide">{d.label}</p>
-                            <p className={`font-bold text-xs mt-0.5 ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{d.value}</p>
-                          </div>
-                        ))}
-                      </div>
-                      <p className="mt-2 text-xs text-slate-400 italic leading-relaxed">{p.note}</p>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Mezcla recomendada */}
-                <div className="px-5 pb-5">
-                  <div className={`rounded-xl border p-4 ${isDark ? 'bg-[#0d1e35] border-blue-900/50' : 'bg-blue-50 border-blue-200'}`}>
-                    <p className={`font-bold text-sm mb-0.5 ${isDark ? 'text-blue-300' : 'text-blue-900'}`}>{chemData.mix.title}</p>
-                    <p className="text-xs text-slate-400 mb-3">{chemData.mix.subtitle}</p>
-                    <div className="space-y-2">
-                      {chemData.mix.components.map((c, i) => (
-                        <div key={i} className={`flex items-center justify-between rounded-lg border px-3 py-2 ${isDark ? 'bg-[#162032] border-[#2a3d55]' : 'bg-white border-blue-100'}`}>
-                          <div className="flex items-center gap-2">
-                            <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-black flex-shrink-0" style={{ background: c.color }}>{i + 1}</span>
-                            <span className={`text-xs font-medium ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{c.product}</span>
-                          </div>
-                          <span className="text-xs font-bold ml-3 flex-shrink-0" style={{ color: c.color }}>{c.amount}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Preparación de la mezcla */}
-              <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-                <div className={`px-6 py-4 border-b flex items-center gap-3 ${isDark ? 'border-[#1e3048]' : 'border-slate-100'}`}>
-                  <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" strokeWidth="2" className="w-4 h-4"><path d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
-                  </div>
-                  <div>
-                    <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Preparación de la mezcla</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">Procedimiento paso a paso para tanque de 200 litros</p>
-                  </div>
-                </div>
-                <div className="p-5 space-y-3">
-                  {MIXING_STEPS.map((s) => (
-                    <div key={s.num} className={`flex gap-3 rounded-xl border p-4 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
-                      <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-black text-sm">{s.num}</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-base leading-none">{s.icon}</span>
-                          <p className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{s.title}</p>
-                        </div>
-                        <p className={`text-xs leading-relaxed ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>{s.desc}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Procedimiento de fumigación */}
-              <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-                <div className={`px-6 py-4 border-b flex items-center gap-3 ${isDark ? 'border-[#1e3048]' : 'border-slate-100'}`}>
-                  <div className="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center flex-shrink-0">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="#15803d" strokeWidth="2" className="w-4 h-4"><path d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/></svg>
-                  </div>
-                  <div>
-                    <h3 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Procedimiento de fumigación</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">Guía completa para una aplicación segura y efectiva</p>
-                  </div>
-                </div>
-                <div className="p-5 space-y-3">
-                  {FUMIGATION_STEPS.map((s) => (
-                    <div key={s.num} className={`flex gap-3 rounded-xl border p-4 ${
-                      s.alert
-                        ? isDark ? 'bg-red-950/40 border-red-800/50' : 'bg-red-50 border-red-200'
-                        : isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'
-                    }`}>
-                      <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center font-black text-sm ${s.alert ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white'}`}>{s.num}</div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-base leading-none">{s.icon}</span>
-                          <p className={`font-bold text-sm ${s.alert ? isDark ? 'text-red-300' : 'text-red-800' : isDark ? 'text-slate-100' : 'text-slate-900'}`}>{s.title}</p>
-                        </div>
-                        <p className={`text-xs leading-relaxed ${s.alert ? isDark ? 'text-red-200' : 'text-red-700' : isDark ? 'text-slate-300' : 'text-slate-600'}`}>{s.desc}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className={`mx-5 mb-5 rounded-xl border px-4 py-3 text-xs flex items-start gap-2 ${isDark ? 'bg-amber-950/30 border-amber-800/50 text-amber-200' : 'bg-amber-50 border-amber-200 text-amber-800'}`}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 flex-shrink-0 mt-0.5"><path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
-                  <span>Las dosis indicadas son de referencia. Consulte siempre la etiqueta oficial del producto y el criterio de un ingeniero agrónomo antes de aplicar. El uso inadecuado de plaguicidas puede dañar el cultivo, la salud y el medio ambiente.</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between px-1">
-            <p className="text-xs text-slate-400">Análisis guardado automáticamente en el historial</p>
-            <button
-              type="button"
-              onClick={handleExportPDF}
-              disabled={exportingPdf}
-              className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 transition disabled:opacity-60"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-rose-500">
-                <path d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
-                <path d="M14 3v5a1 1 0 001 1h5M9 17v-5m0 0h6m-6 0l3-3m0 0l3 3"/>
-              </svg>
-              {exportingPdf ? 'Generando…' : 'Exportar PDF'}
-            </button>
-          </div>
-
-          {showPerformance && timings && (
-            <AnalysisTimingPanel seg={timings.seg} xai={timings.xai} loadMs={modelLoadMs} prepMs={timings.prepMs} upload={timings.upload}/>
+              )}
+              {savedId && (
+                <p className={`flex items-center gap-2 px-1 text-[10.5px] ${MUTED}`}><CheckCircle/>Análisis guardado en tu historial</p>
+              )}
+              {showPerformance && timings && (
+                <AnalysisTimingPanel seg={timings.seg} xai={timings.xai} loadMs={modelLoadMs} prepMs={timings.prepMs} upload={timings.upload}/>
+              )}
+            </>
           )}
         </div>
       )}
-
-      </>}
     </div>
   )
 }

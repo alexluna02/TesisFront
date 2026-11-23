@@ -1,17 +1,29 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useTheme } from './ThemeContext.jsx'
 import Analizar from './Analizar.jsx'
 import Historial from './Historial.jsx'
 import Enfermedades from './Enfermedades.jsx'
+import AcercaDe from './AcercaDe.jsx'
 import Mercado from './Mercado.jsx'
 import Profile from './Profile.jsx'
 import Usuarios from './Usuarios.jsx'
 import ModeloIA from './ModeloIA.jsx'
-import { affectedFromRecord, lotSeverity, severityFromRecord } from './severity.js'
+import Consultas from './Consultas.jsx'
+import { affectedFromRecord, severityFromRecord, SEVERITY_PALETTE } from './severity.js'
 import Login from './Login.jsx'
-import foto3 from './Imagenes/foto3.webp'
+import heroDron from './Imagenes/hero-dron.webp'
+import heroInsignia from './Imagenes/hero-insignia.png'
+import topbarHojas from './Imagenes/topbar-hojas.png'
+import inicioMazorca from './Imagenes/inicio-mazorca.png'
+import inicioHojas from './Imagenes/inicio-hojas.png'
+import { DISEASES, diseaseKey, diseaseMeta, recommendationsFor } from './diseases.js'
+import { RESULT_STYLE, SEVERITY_CHIP, resultColor, resultKeyOf, visitResultKey, daysAgo, whenLabel } from './resultados.js'
+import SeverityScale from './SeverityScale.jsx'
+import ParcelMiniMap from './ParcelMiniMap.jsx'
+import sidebarPhoto from './Imagenes/sidebar-maizal.webp'
+import logoHojas from './Imagenes/logo-hojas.png'
 import { api, fetchMe, fetchAnalisis, logoutRequest, isLogged, clearAuthData, getRefreshToken, SESSION_EXPIRED_EVENT } from './api.js'
-import { fetchEnfermedades } from './api.js'
+import { fetchEnfermedades, apiDate, fetchConsultas, fetchConsultasResumen } from './api.js'
 import { loadParcelHistory, PARCEL_HISTORY_KEY, getParcelaSummaries, PARCELAS_KEY } from './AnalizarParcela.jsx'
 
 // ── Google Font ───────────────────────────────────────────────────────────────
@@ -21,67 +33,7 @@ const FontLink = () => (
   `}</style>
 )
 
-// ── Sparkline SVG ─────────────────────────────────────────────────────────────
-function Sparkline({ color, data }) {
-  const w = 120, h = 36
-  const max = Math.max(...data), min = Math.min(...data)
-  const pts = data.map((v, i) => {
-    const x = (i / (data.length - 1)) * w
-    const y = h - ((v - min) / (max - min || 1)) * (h - 4) - 2
-    return `${x},${y}`
-  }).join(' ')
-  return (
-    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} style={{ overflow: 'visible' }}>
-      <defs>
-        <linearGradient id={`sg-${color}`} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.2"/>
-          <stop offset="100%" stopColor={color} stopOpacity="0"/>
-        </linearGradient>
-      </defs>
-      <polyline fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" points={pts} />
-    </svg>
-  )
-}
-
-// ── Donut Chart ───────────────────────────────────────────────────────────────
-function DonutChart({ slices }) {
-  const r = 54, cx = 70, cy = 70, stroke = 28
-  let cumulative = 0
-  const total = slices.reduce((s, sl) => s + sl.value, 0)
-  const circ = 2 * Math.PI * r
-
-  return (
-    <svg width="140" height="140" viewBox="0 0 140 140">
-      {slices.map((sl, i) => {
-        const frac = sl.value / total
-        const dashArray = `${frac * circ} ${circ}`
-        const offset = circ - cumulative * circ
-        cumulative += frac
-        return (
-          <circle
-            key={i}
-            cx={cx} cy={cy} r={r}
-            fill="none"
-            stroke={sl.color}
-            strokeWidth={stroke}
-            strokeDasharray={dashArray}
-            strokeDashoffset={offset}
-            style={{ transform: 'rotate(-90deg)', transformOrigin: `${cx}px ${cy}px`, transition: 'stroke-dasharray 0.6s ease' }}
-          />
-        )
-      })}
-      <circle cx={cx} cy={cy} r={r - stroke / 2 - 2} fill="white"/>
-    </svg>
-  )
-}
-
 // ── Icons ─────────────────────────────────────────────────────────────────────
-const IcoLeaf = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
-    <path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2z"/>
-    <path d="M7 17s1-5 5-7 8-1 8-1-1 5-5 7-8 1-8 1z"/>
-  </svg>
-)
 const IcoHome = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[18px] h-[18px]">
     <path d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
@@ -97,9 +49,9 @@ const IcoHistory = () => (
     <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
   </svg>
 )
-const IcoAbout = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[18px] h-[18px]">
-    <path d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+const IcoInfo = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
+    <circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>
   </svg>
 )
 const IcoDisease = () => (
@@ -124,6 +76,11 @@ const IcoModel = () => (
     <path strokeLinecap="round" strokeLinejoin="round" d="M4 19h16M7 16V10m5 6V6m5 10v-4"/>
   </svg>
 )
+const IcoChat = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
+    <path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12Z"/><path d="M8.5 10.5h7M8.5 13.5h4.5"/>
+  </svg>
+)
 const IcoMenu = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
     <path d="M4 6h16M4 12h16M4 18h16"/>
@@ -137,11 +94,6 @@ const IcoX = () => (
 const IcoChevronRight = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4">
     <path d="M9 18l6-6-6-6"/>
-  </svg>
-)
-const IcoUpload = () => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[18px] h-[18px]">
-    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
   </svg>
 )
 const IcoEye = () => (
@@ -275,25 +227,26 @@ const IcoImageSm = () => (
 // ── Nav config ────────────────────────────────────────────────────────────────
 // Analizar e Historial se abren como submenús: cada opción elige el modo / la pestaña
 const ANALIZAR_SUBNAV = [
-  { tab: 'individual', label: 'Análisis Individual',  Icon: IcoImageSm },
-  { tab: 'parcela',    label: 'Análisis por Parcela', Icon: IcoMapSm   },
+  { tab: 'individual', label: 'Individual',  Icon: IcoImageSm },
+  { tab: 'parcela',    label: 'Por parcela', Icon: IcoMapSm   },
 ]
 const HISTORIAL_SUBNAV = [
-  { tab: 'individual', label: 'Historial Individual',  Icon: IcoUserSm },
-  { tab: 'parcelas',   label: 'Historial por Parcela', Icon: IcoMapSm  },
+  { tab: 'individual', label: 'Individual',  Icon: IcoUserSm },
+  { tab: 'parcelas',   label: 'Por parcela', Icon: IcoMapSm  },
 ]
 // Título de la barra superior para cada opción de los submenús
 const SUBNAV_TITLES = {
-  analizar:  { individual: 'Análisis Individual', parcela: 'Análisis por Parcela' },
-  historial: { individual: 'Historial Individual', parcelas: 'Historial por Parcela' },
+  analizar:  { individual: 'Análisis individual', parcela: 'Análisis por parcela' },
+  historial: { individual: 'Historial de análisis individual', parcelas: 'Historial de análisis por parcela' },
 }
 const NAV = [
   { id: 'inicio',       label: 'Inicio',           Icon: IcoHome    },
   { id: 'analizar',     label: 'Analizar',         Icon: IcoScan,    children: ANALIZAR_SUBNAV },
   { id: 'historial',    label: 'Historial',        Icon: IcoHistory, children: HISTORIAL_SUBNAV },
+  { id: 'consultas',    label: 'Consultas',        Icon: IcoChat    },
   { id: 'enfermedades', label: 'Enfermedades',     Icon: IcoDisease },
   { id: 'mercado',      label: 'Mercado',          Icon: IcoMarket  },
-  { id: 'acerca',       label: 'Acerca de',        Icon: IcoAbout   },
+  { id: 'acerca',       label: 'Acerca de',        Icon: IcoInfo    },
 ]
 const RESEARCH_NAV = [
   { id: 'modelo',       label: 'Ficha del modelo', Icon: IcoModel   },
@@ -303,7 +256,7 @@ const ADMIN_NAV = [
 ]
 
 const normalizeRole = (role) => String(role ?? '').trim().toLowerCase()
-const ROLE_LABELS = { agricultor: 'Agricultor', investigador: 'Investigador', admin: 'Administrador' }
+const ROLE_LABELS = { agricultor: 'Agricultor', investigador: 'Investigador', experto: 'Experto', admin: 'Administrador' }
 const roleLabel = (role) => ROLE_LABELS[normalizeRole(role)] ?? 'Agricultor'
 const canSeeResearch = (role) => ['investigador', 'admin'].includes(normalizeRole(role))
 const navForRole = (role) => [
@@ -313,18 +266,48 @@ const navForRole = (role) => [
 ]
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
-const navItemClass = (active, isDark) => `relative w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-semibold transition-all duration-150 ${
-  active ? '' : isDark
-    ? 'text-slate-400 hover:text-slate-100 hover:bg-white/10'
-    : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-}`
-const navItemStyle = (active, isDark) => (active
-  ? isDark
-    ? { background: 'rgba(139,92,246,0.18)', color: '#c4b5fd', boxShadow: 'inset 0 0 0 1px rgba(139,92,246,0.25)' }
-    : { background: 'rgba(255,255,255,0.72)', color: '#5b21b6', boxShadow: '0 1px 6px rgba(124,58,237,0.12), inset 0 0 0 1px rgba(139,92,246,0.25)' }
-  : { border: '1px solid transparent' })
+// Diseño de la maqueta del usuario: panel claro flotante y delgado (166 px, lo que mide la
+// maqueta tal como el usuario la ve en su pantalla), logo de hojas, botones compactos con
+// texto gris azulado, píldora verde degradada para la sección activa y, al pie, la foto de
+// maizal al atardecer: su onda verde se funde con el pie verde claro donde van la tarjeta de
+// usuario y "Cerrar sesión", siempre debajo de la foto (nunca encima).
+//
+// En pantallas de poca altura (< 760 px) todo se compacta un poco más para que la foto siga
+// a la vista. Las clases van completas porque Tailwind solo genera las que encuentra
+// escritas literalmente.
+const SB_ITEM = 'group relative flex w-full items-center gap-2 rounded-xl py-1 pl-2 pr-1.5 text-[11.5px] outline-hidden transition-[background-color] duration-200 focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:ring-emerald-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#0f1d17] [@media(max-height:759px)]:py-[2px]'
+const SB_ITEM_ACTIVE = 'bg-linear-to-r from-[#0a8f4f] via-[#2fa865] to-[#68c470] font-semibold text-white shadow-[0_6px_14px_-8px_rgba(10,143,79,0.75)]'
+const SB_ITEM_IDLE = 'font-medium text-[#223048] hover:bg-[#eef6f0] dark:text-slate-200 dark:hover:bg-white/[0.06]'
+const SB_ICON = 'grid h-[26px] w-[26px] shrink-0 place-items-center rounded-full transition-[background-color] [&>svg]:h-4 [&>svg]:w-4 [@media(max-height:759px)]:[&>svg]:h-[15px] [@media(max-height:759px)]:[&>svg]:w-[15px]'
 
-function NavGroup({ item, active, isDark, expanded, onToggle, currentTab, onSelect }) {
+const IcoLogout = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-5 h-5 flex-shrink-0">
+    <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>
+  </svg>
+)
+
+const initialsOf = (name) => (
+  String(name ?? '').trim().split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('') || 'U'
+)
+
+// Onda verde translúcida de la maqueta bajo el logo
+const HeaderWave = () => (
+  <svg viewBox="0 0 166 24" preserveAspectRatio="none" aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 h-4 w-full">
+    <path d="M0 15C34 4 77 22 116 12c19-5 36-6 50-4v16H0Z" className="fill-[#e6f4e7] dark:fill-emerald-400/[0.06]" />
+    <path d="M0 19C45 8 86 26 128 15c16-4 29-5 38-3" fill="none" strokeWidth="1" className="stroke-[#c8e7cb] dark:stroke-emerald-400/20" />
+  </svg>
+)
+
+// Icono del botón: dentro de un círculo translúcido cuando la sección está activa
+function NavIcon({ Icon, active }) {
+  return (
+    <span className={`${SB_ICON} ${active ? 'bg-white/25 text-white' : 'text-[#253446] dark:text-emerald-300/90'}`}>
+      <Icon />
+    </span>
+  )
+}
+
+function NavGroup({ item, active, expanded, onToggle, currentTab, onSelect }) {
   const { label, Icon, children } = item
   const submenuId = `submenu-${item.id}`
   return (
@@ -334,13 +317,13 @@ function NavGroup({ item, active, isDark, expanded, onToggle, currentTab, onSele
         onClick={onToggle}
         aria-expanded={expanded}
         aria-controls={submenuId}
-        className={navItemClass(active, isDark)}
-        style={navItemStyle(active, isDark)}
+        className={`${SB_ITEM} ${active ? SB_ITEM_ACTIVE : SB_ITEM_IDLE}`}
       >
-        {active && <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-violet-500"/>}
-        <span style={{ color: active ? (isDark ? '#a78bfa' : '#7c3aed') : undefined }}><Icon /></span>
-        <span className="flex-1 text-left">{label}</span>
-        <IcoChevronDown className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+        <NavIcon Icon={Icon} active={active} />
+        <span className="min-w-0 flex-1 break-words text-left">{label}</span>
+        <span className="mr-0.5 flex shrink-0 [&>svg]:h-3.5 [&>svg]:w-3.5">
+          <IcoChevronDown className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''} ${active ? 'text-white/90' : 'text-[#223048]/60 dark:text-slate-400'}`} />
+        </span>
       </button>
 
       {/* grid-rows 0fr → 1fr anima la altura del submenú sin medirla */}
@@ -350,14 +333,8 @@ function NavGroup({ item, active, isDark, expanded, onToggle, currentTab, onSele
         className={`grid transition-[grid-template-rows] duration-300 ease-out ${expanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}
       >
         <div className="overflow-hidden">
-          <div
-            className="mt-1.5 mb-1 rounded-2xl p-1.5 space-y-0.5"
-            style={{
-              background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.45)',
-              border: '1px solid rgba(139,92,246,0.18)',
-              boxShadow: isDark ? 'none' : '0 4px 14px rgba(124,58,237,0.06)',
-            }}
-          >
+          {/* La línea del árbol queda centrada bajo el icono del botón padre */}
+          <div className="mb-0.5 ml-5 mt-0.5 space-y-0.5 border-l-2 border-[#cfe6d2] pl-1.5 dark:border-emerald-400/20">
             {children.map(({ tab, label: subLabel, Icon: SubIcon }) => {
               const subActive = active && currentTab === tab
               return (
@@ -367,10 +344,10 @@ function NavGroup({ item, active, isDark, expanded, onToggle, currentTab, onSele
                   tabIndex={expanded ? 0 : -1}
                   onClick={() => onSelect(tab)}
                   aria-current={subActive ? 'page' : undefined}
-                  className={`w-full flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-[13px] font-semibold transition-colors ${
+                  className={`flex w-full items-center gap-1.5 rounded-lg px-1.5 py-[3px] text-[11px] outline-hidden transition-colors focus-visible:ring-2 focus-visible:ring-emerald-600 dark:focus-visible:ring-emerald-500 [&>svg]:h-[13px] [&>svg]:w-[13px] ${
                     subActive
-                      ? isDark ? 'bg-violet-500/20 text-violet-200' : 'bg-white text-violet-700 shadow-sm'
-                      : isDark ? 'text-slate-400 hover:bg-white/10 hover:text-slate-100' : 'text-slate-600 hover:bg-white/70 hover:text-slate-900'
+                      ? 'bg-[#e1f2e3] font-bold text-[#11663a] dark:bg-emerald-400/15 dark:text-emerald-200'
+                      : 'font-medium text-[#3a4a5a] hover:bg-[#eef6f0] hover:text-[#223048] dark:text-slate-400 dark:hover:bg-white/[0.05] dark:hover:text-slate-100'
                   }`}
                 >
                   <SubIcon />
@@ -385,127 +362,182 @@ function NavGroup({ item, active, isDark, expanded, onToggle, currentTab, onSele
   )
 }
 
-function Sidebar({ page, setPage, open, onClose, userName, userRol, subTabs, onSelectSub }) {
-  const { isDark } = useTheme()
+function Sidebar({ page, setPage, open, onClose, userName, userEmail, userRol, subTabs, onSelectSub, onLogout, badges = {} }) {
   // Acordeón: un solo submenú abierto. Al cambiar de página se abre el de esa página
   // (p. ej. llegar al historial desde "Ver todo" en Inicio) y se cierran los demás.
   const [openGroup, setOpenGroup] = useState(page)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const userMenuRef = useRef(null)
+  const userBtnRef = useRef(null)
   useEffect(() => { setOpenGroup(page) }, [page])
+
+  useEffect(() => {
+    if (!userMenuOpen) return undefined
+    const onDown = (e) => { if (!userMenuRef.current?.contains(e.target)) setUserMenuOpen(false) }
+    // Escape cierra; si el foco estaba en el menú vuelve a la tarjeta (no se pierde en <body>)
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      const inside = userMenuRef.current?.contains(document.activeElement)
+      setUserMenuOpen(false)
+      if (inside) userBtnRef.current?.focus()
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [userMenuOpen])
+
+  const go = (id) => { setPage(id); onClose() }
 
   return (
     <>
       {open && (
-        <div className="fixed inset-0 z-30 bg-black/30 backdrop-blur-sm lg:hidden" onClick={onClose}/>
+        <div className="fixed inset-0 z-30 bg-slate-900/30 backdrop-blur-sm lg:hidden" onClick={onClose}/>
       )}
       <aside
-        className={`fixed left-0 top-0 z-40 h-full w-60 flex flex-col transition-transform duration-300 ${open ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
-        style={{
-          background: isDark
-            ? 'linear-gradient(170deg, #1e1040 0%, #0e1f3d 45%, #0a2218 100%)'
-            : 'linear-gradient(170deg, #ede9fe 0%, #dbeafe 45%, #dcfce7 100%)',
-          borderRight: isDark ? '1px solid rgba(99,102,241,0.15)' : '1px solid rgba(139,92,246,0.15)',
-        }}
+        aria-label="Barra lateral"
+        className={`fixed inset-y-3 left-3 z-40 flex w-[166px] flex-col overflow-hidden rounded-[18px] border border-[#e3e9ee] bg-linear-to-b from-white via-[#f8fbf9] to-[#eef6f0] shadow-[0_18px_40px_-30px_rgba(15,60,40,0.45)] transition-transform duration-300 dark:border-white/10 dark:from-[#0f1d17] dark:via-[#0c1813] dark:to-[#0a1510] ${open ? 'translate-x-0' : '-translate-x-[110%]'} lg:translate-x-0`}
       >
-        {/* Brand */}
-        <div
-          className="flex items-center gap-3 px-5 py-5"
-          style={{ borderBottom: isDark ? '1px solid rgba(99,102,241,0.12)' : '1px solid rgba(139,92,246,0.12)' }}
-        >
-          <div
-            className="flex h-10 w-10 items-center justify-center rounded-2xl text-white flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #22c55e 100%)', boxShadow: '0 4px 16px rgba(124,58,237,0.35)' }}
-          >
-            <IcoLeaf />
+        {/* Logo, menú y foto se desplazan juntos (sin barra visible) solo si la pantalla es
+            demasiado baja; el pie con la tarjeta de usuario queda siempre fijo abajo */}
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="relative flex shrink-0 flex-col items-center px-3 pb-4 pt-3.5 [@media(max-height:759px)]:pb-3 [@media(max-height:759px)]:pt-2.5">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Cerrar menú"
+              className="absolute right-1.5 top-1.5 z-10 grid h-7 w-7 place-items-center rounded-lg text-slate-500 transition hover:bg-black/5 hover:text-slate-600 lg:hidden dark:text-slate-400 dark:hover:bg-white/10 dark:hover:text-slate-200"
+            >
+              <IcoX />
+            </button>
+            <img
+              src={logoHojas}
+              alt=""
+              draggable="false"
+              className="h-8 w-auto select-none [@media(max-height:759px)]:h-[26px]"
+            />
+            <p className="mt-0.5 text-[18px] font-extrabold leading-tight text-[#0f4a2a] dark:text-white [@media(max-height:759px)]:text-[17px]">
+              AgroScan
+            </p>
+            <p className="text-[9px] font-medium text-[#3e4f5c] dark:text-slate-400">UAV • Maíz • IA</p>
+            <HeaderWave />
           </div>
-          <div className="min-w-0">
-            <p className={`font-black text-base leading-tight ${isDark ? 'text-white' : 'text-slate-900'}`}>AgroScan</p>
-            <p className="text-[11px] font-semibold leading-tight" style={{ color: isDark ? '#a78bfa' : '#7c3aed' }}>UAV · Maíz · IA</p>
-          </div>
-          <button onClick={onClose} className={`lg:hidden ml-auto ${isDark ? 'text-slate-400' : 'text-slate-400'} hover:text-slate-300`}><IcoX /></button>
-        </div>
 
-        {/* Section label */}
-        <div className="px-5 pt-5 pb-2">
-          <p className={`text-[10px] font-bold uppercase tracking-[0.18em] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Navegación</p>
-        </div>
-
-        {/* Nav */}
-        <nav className="px-3 space-y-0.5">
-          {navForRole(userRol).map((item) => {
-            const { id, label, Icon, children } = item
-            const active = page === id
-            if (children) {
+          <nav aria-label="Navegación principal" className="relative space-y-[3px] px-2.5 pt-1 [@media(max-height:759px)]:space-y-0.5 [@media(max-height:759px)]:pt-0.5">
+            {navForRole(userRol).map((item) => {
+              const { id, label, Icon, children } = item
+              const active = page === id
+              if (children) {
+                return (
+                  <NavGroup
+                    key={id}
+                    item={item}
+                    active={active}
+                    expanded={openGroup === id}
+                    onToggle={() => setOpenGroup((g) => (g === id ? null : id))}
+                    currentTab={subTabs[id]}
+                    onSelect={(tab) => { onSelectSub(id, tab); onClose() }}
+                  />
+                )
+              }
+              const badge = badges[id] ?? 0
               return (
-                <NavGroup
+                <button
                   key={id}
-                  item={item}
-                  active={active}
-                  isDark={isDark}
-                  expanded={openGroup === id}
-                  onToggle={() => setOpenGroup((g) => (g === id ? null : id))}
-                  currentTab={subTabs[id]}
-                  onSelect={(tab) => { onSelectSub(id, tab); onClose() }}
-                />
+                  type="button"
+                  onClick={() => go(id)}
+                  aria-current={active ? 'page' : undefined}
+                  className={`${SB_ITEM} ${active ? SB_ITEM_ACTIVE : SB_ITEM_IDLE}`}
+                >
+                  <NavIcon Icon={Icon} active={active} />
+                  <span className="min-w-0 break-words">{label}</span>
+                  {/* Conversaciones con novedades (mensajes sin leer, consulta nueva o dictamen nuevo) */}
+                  {badge > 0 && (
+                    <>
+                      <span aria-hidden="true" className={`ml-auto grid h-[17px] min-w-[17px] shrink-0 place-items-center rounded-full px-1 text-[9.5px] font-bold leading-none ${active ? 'bg-white text-[#0a6b3c]' : 'bg-[#0b7a45] text-white dark:bg-emerald-400 dark:text-[#04130b]'}`}>
+                        {badge > 99 ? '99+' : badge}
+                      </span>
+                      <span className="sr-only">, {badge} con novedades</span>
+                    </>
+                  )}
+                </button>
               )
-            }
-            return (
-              <button
-                key={id}
-                onClick={() => { setPage(id); onClose() }}
-                className={navItemClass(active, isDark)}
-                style={navItemStyle(active, isDark)}
-              >
-                {active && (
-                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-violet-500"/>
-                )}
-                <span style={{ color: active ? (isDark ? '#a78bfa' : '#7c3aed') : undefined }}><Icon /></span>
-                <span>{label}</span>
-              </button>
-            )
-          })}
-        </nav>
+            })}
+          </nav>
 
-        {/* User card */}
-        <div className="px-3 pt-4 flex-1">
-          <p className={`text-[10px] font-bold uppercase tracking-[0.18em] px-1 mb-2 ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>Usuario</p>
+          {/* Foto de la maqueta pegada al pie: crece con el espacio libre (hasta el 40 % del alto
+              de la pantalla) y se alinea por abajo para que su onda verde empalme siempre con el
+              pie. Arriba se desvanece sobre el fondo del panel. */}
+          <div className="h-1.5 shrink-0" />
           <div
-            className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
-            style={{
-              background: isDark ? 'rgba(139,92,246,0.1)' : 'rgba(255,255,255,0.55)',
-              border: '1px solid rgba(139,92,246,0.15)',
-            }}
+            aria-hidden="true"
+            className="relative mt-auto max-h-[min(40vh,330px)] min-h-[110px] flex-1 overflow-hidden [-webkit-mask-image:linear-gradient(to_bottom,transparent,#000_28px)] [mask-image:linear-gradient(to_bottom,transparent,#000_28px)] [@media(max-height:759px)]:min-h-[96px]"
           >
-            <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-black flex-shrink-0"
-              style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)' }}>
-              {userName ? userName.charAt(0).toUpperCase() : 'U'}
-            </div>
-            <div className="min-w-0">
-              <p className={`text-xs font-bold truncate ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>{userName || 'Usuario'}</p>
-              <p className={`text-[10px] ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>{roleLabel(userRol)}</p>
-            </div>
+            <img src={sidebarPhoto} alt="" draggable="false" className="absolute inset-0 h-full w-full select-none object-cover object-[30%_100%] dark:brightness-[0.82]" />
+            <div className="absolute inset-x-0 bottom-0 hidden h-14 bg-linear-to-b from-transparent to-[#0e1f16] dark:block" />
           </div>
         </div>
 
-        {/* Divider */}
-        <div className="mx-5 mt-4 mb-3" style={{ borderTop: `1px solid ${isDark ? 'rgba(99,102,241,0.15)' : 'rgba(99,102,241,0.12)'}` }}/>
-
-        {/* Status card */}
-        <div className="mx-3 mb-5 rounded-2xl px-4 py-3"
-          style={{
-            background: isDark ? 'rgba(34,197,94,0.07)' : 'rgba(255,255,255,0.60)',
-            border: '1px solid rgba(34,197,94,0.25)',
-          }}
-        >
-          <div className="flex items-center gap-2 mb-1">
-            <span className="relative w-2 h-2 flex-shrink-0">
-              <span className="absolute inset-0 rounded-full bg-emerald-400 animate-ping opacity-60"/>
-              <span className="relative block w-2 h-2 rounded-full bg-emerald-500"/>
+        {/* Pie verde claro bajo la foto: tarjeta de usuario y cierre de sesión */}
+        <div ref={userMenuRef} className="relative z-10 shrink-0 bg-[#d4efd2] px-3 pb-3.5 pt-[3px] dark:bg-[#0e1f16] [@media(max-height:759px)]:pb-2.5">
+          {/* Punta de la onda de la foto que continúa por el borde izquierdo, como en la maqueta */}
+          <svg viewBox="0 0 10 12" aria-hidden="true" className="pointer-events-none absolute left-0 top-0 h-3 w-2.5 dark:hidden">
+            <path d="M0 0h10C6 2 2.5 6 0 12Z" fill="#83d18a" />
+          </svg>
+          <button
+            ref={userBtnRef}
+            type="button"
+            onClick={() => setUserMenuOpen((o) => !o)}
+            aria-controls="sb-user-menu"
+            aria-expanded={userMenuOpen}
+            aria-label={`${userName || 'Usuario'}, ${roleLabel(userRol)}: opciones de la cuenta`}
+            title={userName || undefined}
+            className="relative flex w-full items-center gap-2 rounded-[11px] border border-white/45 bg-white/30 py-1.5 pl-2.5 pr-2 text-left shadow-[0_4px_12px_-8px_rgba(15,60,40,0.45)] transition hover:bg-white/45 dark:border-white/10 dark:bg-white/[0.06] dark:hover:bg-white/10"
+          >
+            <span aria-hidden="true" className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#06683b] text-[9.5px] font-bold text-white">
+              {initialsOf(userName)}
             </span>
-            <p className="text-xs font-bold text-emerald-500">Sistema activo</p>
-          </div>
-          <p className={`text-[11px] leading-relaxed pl-4 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
-            Listo para analizar imágenes UAV.
-          </p>
+            <span className="min-w-0 flex-1">
+              {/* Nombre y primer apellido, como en la maqueta; el nombre completo va en title/aria-label */}
+              <span className="block truncate text-[11px] font-bold leading-tight text-[#1e2a33] dark:text-white">{String(userName ?? '').trim().split(/\s+/).slice(0, 2).join(' ') || 'Usuario'}</span>
+              <span className="block break-words text-[9.5px] leading-tight text-[#55656f] dark:text-slate-400">{roleLabel(userRol)}</span>
+            </span>
+            <span className="flex shrink-0 [&>svg]:h-3.5 [&>svg]:w-3.5">
+              <IcoChevronDown className={`text-[#223048] transition-transform dark:text-slate-300 ${userMenuOpen ? 'rotate-180' : ''}`} />
+            </span>
+          </button>
+          {/* Desplegable de la tarjeta: va después del botón para que el orden de tabulación sea el visual */}
+          {userMenuOpen && (
+            <div id="sb-user-menu" className="absolute inset-x-3 bottom-full mb-1.5 rounded-xl border border-[#e3e9ee] bg-white p-1 shadow-xl dark:border-white/10 dark:bg-[#0f1d17]">
+              <p className="truncate px-2 pb-1 pt-1 text-[10px] text-[#55656f] dark:text-slate-400">{userEmail || 'Sin correo'}</p>
+              <button
+                type="button"
+                onClick={() => { setUserMenuOpen(false); go('perfil') }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold text-[#223048] transition hover:bg-[#eef6f0] dark:text-slate-200 dark:hover:bg-white/5 [&>svg]:h-3.5 [&>svg]:w-3.5"
+              >
+                <IcoUserSm />
+                Mi perfil
+              </button>
+              <button
+                type="button"
+                onClick={() => { setUserMenuOpen(false); onLogout() }}
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold text-red-600 transition hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-500/10 dark:hover:text-red-400 [&>svg]:h-3.5 [&>svg]:w-3.5"
+              >
+                <IcoLogout />
+                Cerrar sesión
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onLogout}
+            className="ml-2.5 mt-[7px] flex items-center gap-2 rounded-lg px-1.5 py-1 text-[10.5px] font-medium text-[#3b4754] transition hover:bg-white/50 hover:text-red-700 dark:text-slate-400 dark:hover:bg-white/5 dark:hover:text-red-400 [&>svg]:h-3.5 [&>svg]:w-3.5"
+          >
+            <IcoLogout />
+            Cerrar sesión
+          </button>
         </div>
       </aside>
     </>
@@ -513,209 +545,354 @@ function Sidebar({ page, setPage, open, onClose, userName, userRol, subTabs, onS
 }
 
 // ── Top bar ───────────────────────────────────────────────────────────────────
-function Topbar({ page, subTabs = {}, onMenuClick, apiStatus, userName, userEmail, userRol, onLogout, weather, setPage }) {
-  const { isDark, toggle: toggleTheme } = useTheme()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const [weatherOpen, setWeatherOpen] = useState(false)
-  const titles = {
-    inicio:       'Panel Principal',
-    analizar:     'Análisis de Cultivos',
-    historial:    'Historial de Análisis',
-    enfermedades: 'Guía de Enfermedades',
-    mercado:      'Mercado Agrícola',
-    acerca:       'Acerca de Nosotros',
-    usuarios:     'Gestión de Usuarios',
-    modelo:       'Ficha del Modelo',
+// Barra superior de la maqueta: «AgroScan / sección» con la fecha debajo, estado de la API,
+// clima, campana de alertas y el avatar con su menú (perfil, modo oscuro y cerrar sesión).
+// No tiene fondo propio (comparte el de la página, translúcido al desplazarse) y alinea su
+// contenido con el de <main> (max-w-6xl). Medidas a la escala en que el usuario ve la maqueta.
+const TOPBAR_TITLES = {
+  inicio:       'Panel principal',
+  analizar:     'Análisis de cultivos',
+  historial:    'Historial de análisis',
+  enfermedades: 'Guía de enfermedades',
+  mercado:      'Mercado agrícola',
+  acerca:       'Acerca de nosotros',
+  usuarios:     'Gestión de usuarios',
+  modelo:       'Ficha del modelo',
+  perfil:       'Mi perfil',
+  consultas:    'Consultas',
+}
+
+const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1)
+// «Lunes, 16 de Noviembre de 2026», como en la maqueta
+const longDate = (d) => (
+  `${capitalize(d.toLocaleDateString('es-ES', { weekday: 'long' }))}, ${d.getDate()} de ${capitalize(d.toLocaleDateString('es-ES', { month: 'long' }))} de ${d.getFullYear()}`
+)
+const timeAgo = (iso) => {
+  const s = (Date.now() - new Date(iso).getTime()) / 1000
+  if (s < 60) return 'hace un momento'
+  if (s < 3600) return `hace ${Math.floor(s / 60)} min`
+  if (s < 86400) return `hace ${Math.floor(s / 3600)} h`
+  const days = Math.floor(s / 86400)
+  return days === 1 ? 'ayer' : `hace ${days} días`
+}
+
+// Cierra un desplegable al hacer clic fuera de `ref` o al pulsar Escape; si el foco estaba
+// dentro, vuelve al botón que lo abrió (`triggerRef`) en vez de perderse en <body>
+function useDismiss(ref, open, setOpen, triggerRef) {
+  useEffect(() => {
+    if (!open) return undefined
+    const onDown = (e) => { if (!ref.current?.contains(e.target)) setOpen(false) }
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return
+      const inside = ref.current?.contains(document.activeElement)
+      setOpen(false)
+      if (inside) triggerRef?.current?.focus()
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [ref, open, setOpen, triggerRef])
+}
+
+const IcoCalendar = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 shrink-0">
+    <rect x="3" y="5" width="18" height="16" rx="2.5"/><path d="M3 10h18M8 3v4M16 3v4"/>
+  </svg>
+)
+const IcoBell = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-[21px] w-[21px]">
+    <path d="M6 8a6 6 0 1112 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 003.4 0"/>
+  </svg>
+)
+const IcoMoon = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4 shrink-0">
+    <path fillRule="evenodd" d="M9.528 1.718a.75.75 0 01.162.819A8.97 8.97 0 009 6a9 9 0 009 9 8.97 8.97 0 003.463-.69.75.75 0 01.981.98 10.503 10.503 0 01-9.694 6.46c-5.799 0-10.5-4.701-10.5-10.5 0-4.368 2.667-8.112 6.46-9.694a.75.75 0 01.818.162z" clipRule="evenodd"/>
+  </svg>
+)
+const IcoSun = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4 shrink-0">
+    <path d="M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z"/>
+  </svg>
+)
+
+const API_PILL = {
+  online:   { label: 'API conectada',    pill: 'bg-[#e5f6ee] text-[#0a6332] dark:bg-emerald-400/10 dark:text-emerald-300', dot: 'bg-[#0f8a4c] dark:bg-emerald-400' },
+  checking: { label: 'Verificando API…', pill: 'bg-slate-100 text-slate-500 dark:bg-white/5 dark:text-slate-400',           dot: 'bg-slate-400' },
+  offline:  { label: 'API desconectada', pill: 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300',           dot: 'bg-rose-500' },
+}
+
+function WeatherPill({ weather }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const btnRef = useRef(null)
+  useDismiss(ref, open, setOpen, btnRef)
+  const info = getWeatherInfo(weather.code)
+  return (
+    <div ref={ref} className="relative hidden shrink-0 md:block">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls="topbar-clima"
+        aria-label={`Clima: ${weather.temp} °C en ${weather.city}`}
+        className="inline-flex h-[23px] items-center gap-1.5 rounded-full border border-[#e3e9ee] bg-white/70 px-2.5 text-[10.5px] font-semibold text-[#334155] transition hover:bg-white dark:border-white/10 dark:bg-white/5 dark:text-slate-300 dark:hover:bg-white/10"
+      >
+        <span className="text-[12px] leading-none">{info.emoji}</span>
+        {weather.temp}°C
+        <span className="max-w-[90px] truncate font-medium text-[#64748b] dark:text-slate-400">{weather.city}</span>
+      </button>
+
+      {open && (
+        <div id="topbar-clima" role="region" aria-label="Clima" className="absolute left-0 top-full z-30 mt-2 w-60 rounded-2xl border border-slate-200 bg-white p-4 shadow-xl shadow-slate-200/30 dark:border-white/10 dark:bg-[#111a2b] dark:shadow-none">
+          <div className="mb-3 flex items-center gap-3">
+            <span className="text-3xl">{info.emoji}</span>
+            <div>
+              <p className="text-xl font-black text-slate-900 dark:text-white">{weather.temp}°C</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{info.label}</p>
+            </div>
+          </div>
+          <p className="mb-3 text-xs font-semibold text-slate-700 dark:text-slate-300">📍 {weather.city}</p>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-blue-50 p-2 text-center dark:bg-blue-500/10">
+              <p className="text-[10px] font-semibold text-blue-500">Sensación</p>
+              <p className="text-sm font-black text-blue-700 dark:text-blue-300">{weather.feelsLike}°C</p>
+            </div>
+            <div className="rounded-xl bg-cyan-50 p-2 text-center dark:bg-cyan-500/10">
+              <p className="text-[10px] font-semibold text-cyan-500">Humedad</p>
+              <p className="text-sm font-black text-cyan-700 dark:text-cyan-300">{weather.humidity}%</p>
+            </div>
+            <div className="rounded-xl bg-slate-50 p-2 text-center dark:bg-white/5">
+              <p className="text-[10px] font-semibold text-slate-500">Viento</p>
+              <p className="text-sm font-black text-slate-700 dark:text-slate-200">{weather.wind} <span className="text-[9px] font-normal">km/h</span></p>
+            </div>
+          </div>
+          <div className="mt-3">
+            <FlightStatusBadge weather={weather} />
+          </div>
+          <p className="mt-2 text-center text-[10px] text-slate-400">📡 Ubicación actual · Open-Meteo</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Campana: novedades de las consultas a expertos (mensajes sin leer, consultas recibidas sin
+// abrir, dictámenes sin ver) y detecciones moderadas y graves recientes del historial. El punto
+// rojo indica que hay consultas con novedades o alguna detección posterior a la última vez que se
+// abrió el panel (guardado en este navegador).
+const ALERTS_SEEN_KEY = 'agro_alerts_seen_at'
+const readAlertsSeenAt = () => {
+  try { return Number(localStorage.getItem(ALERTS_SEEN_KEY)) || 0 } catch { return 0 }
+}
+
+const novedadConsulta = (c) => {
+  if (c.no_leidos > 0) return `${c.no_leidos} ${c.no_leidos === 1 ? 'mensaje nuevo' : 'mensajes nuevos'}`
+  if (c.nueva) return 'Nueva conversación'
+  if (c.dictamen_nuevo) return 'Emitió su dictamen sobre tu análisis'
+  return 'Conversación actualizada'
+}
+
+function AlertsBell({ history = [], onOpenHistorial, consultas = [], onOpenConsulta }) {
+  const [open, setOpen] = useState(false)
+  const [seenAt, setSeenAt] = useState(readAlertsSeenAt)
+  const ref = useRef(null)
+  const btnRef = useRef(null)
+  useDismiss(ref, open, setOpen, btnRef)
+  const alerts = history
+    .filter((h) => h.severidad === 'Grave' || h.severidad === 'Moderada')
+    .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+    .slice(0, 5)
+  const unseen = consultas.length > 0 || alerts.some((a) => new Date(a.fecha).getTime() > seenAt)
+
+  const toggle = () => {
+    if (!open) {
+      const now = Date.now()
+      setSeenAt(now)
+      try { localStorage.setItem(ALERTS_SEEN_KEY, String(now)) } catch { /* sin almacenamiento */ }
+    }
+    setOpen(!open)
   }
-  const dateStr = new Date().toLocaleDateString('es-ES', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  })
-  const wInfo = weather ? getWeatherInfo(weather.code) : null
+  const goHistorial = () => { setOpen(false); onOpenHistorial() }
 
   return (
-    <header className={`sticky top-0 z-20 flex items-center justify-between px-6 py-3.5 border-b shadow-sm transition-colors ${isDark ? 'bg-[#0e1929] border-[#1e3048]' : 'bg-white border-slate-100'}`}>
-      <div className="flex items-center gap-4">
-        <button onClick={onMenuClick} className="lg:hidden p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 transition">
-          <IcoMenu />
-        </button>
-        <div>
-          <h1 className={`font-bold text-sm leading-tight ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-            {SUBNAV_TITLES[page]?.[subTabs[page]] ?? titles[page]}
-          </h1>
-          <p className="text-[11px] text-slate-400 capitalize">{dateStr}</p>
-        </div>
+    <div ref={ref} className="relative">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={toggle}
+        aria-controls="topbar-alertas"
+        aria-expanded={open}
+        aria-label={unseen ? 'Alertas (hay novedades)' : 'Alertas'}
+        className="relative grid h-8 w-8 place-items-center rounded-full text-[#0d1424] transition hover:bg-black/[0.04] dark:text-slate-200 dark:hover:bg-white/5"
+      >
+        <IcoBell />
+        {unseen && <span className="absolute right-[5px] top-[4px] h-[7px] w-[7px] rounded-full bg-[#f7252d] ring-2 ring-slate-50 dark:ring-[#0c1220]" />}
+      </button>
 
-        {wInfo && (
-          <div className="relative hidden sm:block">
-            {weatherOpen && <div className="fixed inset-0 z-10" onClick={() => setWeatherOpen(false)} />}
-            <button
-              type="button"
-              onClick={() => { setWeatherOpen((o) => !o); setMenuOpen(false) }}
-              className="relative z-20 flex items-center gap-2 rounded-2xl border px-3 py-1.5 hover:shadow-sm transition-all"
-              style={{ background: wInfo.bg, borderColor: `${wInfo.color}30` }}
-            >
-              <span className="text-base leading-none">{wInfo.emoji}</span>
-              <div className="text-left">
-                <p className="text-xs font-bold leading-none" style={{ color: wInfo.color }}>{weather.temp}°C</p>
-                <p className="text-[10px] leading-tight text-slate-400 max-w-[80px] truncate">{weather.city}</p>
+      {open && (
+        <div id="topbar-alertas" role="region" aria-label="Alertas" className="absolute right-0 top-full z-30 mt-2 max-h-[calc(100dvh-64px)] w-72 overflow-y-auto overscroll-contain rounded-2xl border border-[#e3e9ee] bg-white text-left shadow-xl shadow-slate-900/10 dark:border-white/10 dark:bg-[#111a2b]">
+          {consultas.length > 0 && (
+            <>
+              <div className="border-b border-[#eef2f0] px-4 py-3 dark:border-white/10">
+                <p className="text-[12.5px] font-bold text-[#0d1424] dark:text-slate-100">Consultas a expertos</p>
+                <p className="text-[10.5px] text-[#55656f] dark:text-slate-400">Mensajes que aún no has visto</p>
               </div>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3 h-3" style={{ color: wInfo.color }}><path d="M19 9l-7 7-7-7"/></svg>
-            </button>
-
-            {weatherOpen && (
-              <div className="absolute left-0 top-full mt-2 z-20 w-60 rounded-2xl border border-slate-200 bg-white shadow-xl shadow-slate-200/30 p-4">
-                <div className="flex items-center gap-3 mb-3">
-                  <span className="text-3xl">{wInfo.emoji}</span>
-                  <div>
-                    <p className="text-xl font-black text-slate-900">{weather.temp}°C</p>
-                    <p className="text-xs text-slate-500">{wInfo.label}</p>
-                  </div>
-                </div>
-                <p className="text-xs font-semibold text-slate-700 mb-3">📍 {weather.city}</p>
-                <div className="grid grid-cols-3 gap-2">
-                  <div className="rounded-xl bg-blue-50 p-2 text-center">
-                    <p className="text-[10px] text-blue-500 font-semibold">Sensación</p>
-                    <p className="text-sm font-black text-blue-700">{weather.feelsLike}°C</p>
-                  </div>
-                  <div className="rounded-xl bg-cyan-50 p-2 text-center">
-                    <p className="text-[10px] text-cyan-500 font-semibold">Humedad</p>
-                    <p className="text-sm font-black text-cyan-700">{weather.humidity}%</p>
-                  </div>
-                  <div className="rounded-xl bg-slate-50 p-2 text-center">
-                    <p className="text-[10px] text-slate-500 font-semibold">Viento</p>
-                    <p className="text-sm font-black text-slate-700">{weather.wind} <span className="text-[9px] font-normal">km/h</span></p>
-                  </div>
-                </div>
-                <div className="mt-3">
-                  <FlightStatusBadge weather={weather} />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-2 text-center">
-                  📡 Ubicación actual · Open-Meteo
-                </p>
-              </div>
-            )}
+              <ul className="border-b border-[#eef2f0] py-1 dark:border-white/10">
+                {consultas.map((c) => (
+                  <li key={c.id}>
+                    <button type="button" onClick={() => { setOpen(false); onOpenConsulta(c.id) }} className="flex w-full items-center gap-3 px-4 py-2 text-left transition hover:bg-[#f3f8f5] dark:hover:bg-white/5">
+                      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#e3f6ec] text-[#0b7a45] dark:bg-emerald-400/10 dark:text-emerald-300 [&>svg]:h-[15px] [&>svg]:w-[15px]"><IcoChat /></span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[12px] font-semibold text-[#0d1424] dark:text-slate-100">{c.contraparte?.nombre ?? 'Consulta'}</span>
+                        <span className="block truncate text-[10.5px] text-[#55656f] dark:text-slate-400">{novedadConsulta(c)} · {timeAgo(apiDate(c.ultimo_mensaje_at))}</span>
+                      </span>
+                      {c.no_leidos > 0 && (
+                        <span aria-hidden="true" className="grid h-[18px] min-w-[18px] shrink-0 place-items-center rounded-full bg-[#0b7a45] px-1 text-[10px] font-bold text-white dark:bg-emerald-400 dark:text-[#04130b]">{c.no_leidos}</span>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <div className="border-b border-[#eef2f0] px-4 py-3 dark:border-white/10">
+            <p className="text-[12.5px] font-bold text-[#0d1424] dark:text-slate-100">Alertas</p>
+            <p className="text-[10.5px] text-[#55656f] dark:text-slate-400">Detecciones moderadas y graves recientes</p>
           </div>
-        )}
-      </div>
+          {alerts.length === 0 ? (
+            <p className="px-4 py-6 text-center text-[11.5px] text-[#55656f] dark:text-slate-400">Sin alertas por ahora.</p>
+          ) : (
+            <ul className="py-1">
+              {alerts.map((a) => (
+                <li key={a.id}>
+                  <button type="button" onClick={goHistorial} className="flex w-full items-start gap-3 px-4 py-2 text-left transition hover:bg-[#f3f8f5] dark:hover:bg-white/5">
+                    <span className="mt-[5px] h-2 w-2 shrink-0 rounded-full" style={{ background: SEVERITY_PALETTE[a.severidad] }} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[12px] font-semibold text-[#0d1424] dark:text-slate-100">{a.enfermedadLabel} · {a.severidad.toLowerCase()}</span>
+                      <span className="block text-[10.5px] text-[#55656f] dark:text-slate-400">{Number(a.affectedPercent ?? 0).toFixed(1)} % afectado · {timeAgo(a.fecha)}</span>
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button type="button" onClick={goHistorial} className="block w-full border-t border-[#eef2f0] py-2.5 text-center text-[11.5px] font-semibold text-[#0c6532] transition hover:bg-[#f3f8f5] dark:border-white/10 dark:text-emerald-400 dark:hover:bg-white/5">
+            Ver historial
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
 
-      <div className="relative flex items-center gap-3">
-        {/* Dark mode toggle */}
+function UserMenu({ userName, userEmail, userRol, onLogout, onProfile }) {
+  const { isDark, toggle: toggleTheme } = useTheme()
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const btnRef = useRef(null)
+  useDismiss(ref, open, setOpen, btnRef)
+  const initials = initialsOf(userName)
+  const item = 'flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[12px] font-semibold transition [&>svg]:h-4 [&>svg]:w-4'
+  return (
+    <div ref={ref} className="relative">
+      <button
+        ref={btnRef}
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-controls="topbar-cuenta"
+        aria-expanded={open}
+        aria-label="Menú de usuario"
+        className="flex items-center gap-2 rounded-full p-0.5 pr-1 transition hover:bg-black/[0.04] dark:hover:bg-white/5"
+      >
+        <span className="grid h-[30px] w-[30px] place-items-center rounded-full bg-[#025c33] text-[11.5px] font-bold text-white">{initials}</span>
+        <span className="flex text-[#0d1424] dark:text-slate-300 [&>svg]:h-[18px] [&>svg]:w-[18px]">
+          <IcoChevronDown className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+        </span>
+      </button>
+
+      {open && (
+        <div id="topbar-cuenta" className="absolute right-0 top-full z-30 mt-2 w-64 overflow-hidden rounded-2xl border border-[#e3e9ee] bg-white text-left shadow-xl shadow-slate-900/10 dark:border-white/10 dark:bg-[#111a2b]">
+          <div className="flex items-center gap-3 bg-linear-to-br from-[#e5f4e9] to-[#f5faf7] px-4 py-3.5 dark:from-emerald-400/10 dark:to-transparent">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#025c33] text-[13px] font-bold text-white">{initials}</span>
+            <div className="min-w-0">
+              <p className="truncate text-[13px] font-bold text-[#0d1424] dark:text-white">{userName || 'Usuario'}</p>
+              <p className="truncate text-[11px] text-[#55656f] dark:text-slate-400">{userEmail || 'Sin correo'}</p>
+              <span className="mt-1 inline-flex rounded-full bg-[#d6eedb] px-2 py-0.5 text-[10px] font-bold text-[#0c6532] dark:bg-emerald-400/15 dark:text-emerald-300">{roleLabel(userRol)}</span>
+            </div>
+          </div>
+          <div className="p-1.5">
+            <button type="button" onClick={() => { setOpen(false); onProfile() }} className={`${item} text-[#223048] hover:bg-[#f1f7f3] dark:text-slate-200 dark:hover:bg-white/5`}>
+              <IcoUserSm />
+              Mi perfil
+            </button>
+            <button type="button" role="switch" aria-checked={isDark} onClick={toggleTheme} className={`${item} text-[#223048] hover:bg-[#f1f7f3] dark:text-slate-200 dark:hover:bg-white/5`}>
+              {isDark ? <IcoSun /> : <IcoMoon />}
+              <span className="flex-1 text-left">Modo oscuro</span>
+              <span aria-hidden="true" className={`relative h-[18px] w-8 shrink-0 rounded-full transition-colors ${isDark ? 'bg-emerald-500' : 'bg-slate-300'}`}>
+                <span className={`absolute top-0.5 h-[14px] w-[14px] rounded-full bg-white shadow transition-all ${isDark ? 'left-4' : 'left-0.5'}`} />
+              </span>
+            </button>
+            <div className="mx-2 my-1 h-px bg-[#eef2f0] dark:bg-white/10" />
+            <button type="button" onClick={() => { setOpen(false); onLogout() }} className={`${item} text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-500/10 dark:hover:text-red-400`}>
+              <IcoLogout />
+              Cerrar sesión
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Topbar({ page, subTabs = {}, onMenuClick, apiStatus, userName, userEmail, userRol, onLogout, weather, setPage, history, onGoHistorial, consultas, onOpenConsulta }) {
+  const title = SUBNAV_TITLES[page]?.[subTabs[page]] ?? TOPBAR_TITLES[page] ?? ''
+  const api = API_PILL[apiStatus] ?? API_PILL.offline
+
+  return (
+    <header className="sticky top-0 z-20 bg-slate-50/85 backdrop-blur-md dark:bg-[#0c1220]/85">
+      <div className="relative mx-auto flex w-full max-w-6xl items-center gap-3 px-4 pb-1.5 pt-2.5 md:px-6">
+        {/* Hojas translúcidas de la maqueta detrás de la campana y el avatar */}
+        <img
+          src={topbarHojas}
+          alt=""
+          aria-hidden="true"
+          draggable="false"
+          className="pointer-events-none absolute right-[129px] top-0 hidden h-full w-auto select-none md:block dark:opacity-[0.12]"
+        />
+
         <button
           type="button"
-          onClick={toggleTheme}
-          className={`p-2 rounded-xl border transition-all ${isDark ? 'bg-slate-800 border-slate-700 text-yellow-400 hover:bg-slate-700' : 'bg-slate-50 border-slate-200 text-slate-500 hover:bg-slate-100'}`}
-          title={isDark ? 'Modo claro' : 'Modo oscuro'}
+          onClick={onMenuClick}
+          aria-label="Abrir menú"
+          className="relative rounded-lg p-1.5 text-slate-500 transition hover:bg-black/5 lg:hidden dark:text-slate-300 dark:hover:bg-white/10"
         >
-          {isDark ? (
-            <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-              <path d="M12 2.25a.75.75 0 01.75.75v2.25a.75.75 0 01-1.5 0V3a.75.75 0 01.75-.75zM7.5 12a4.5 4.5 0 119 0 4.5 4.5 0 01-9 0zM18.894 6.166a.75.75 0 00-1.06-1.06l-1.591 1.59a.75.75 0 101.06 1.061l1.591-1.59zM21.75 12a.75.75 0 01-.75.75h-2.25a.75.75 0 010-1.5H21a.75.75 0 01.75.75zM17.834 18.894a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 10-1.061 1.06l1.59 1.591zM12 18a.75.75 0 01.75.75V21a.75.75 0 01-1.5 0v-2.25A.75.75 0 0112 18zM7.758 17.303a.75.75 0 00-1.061-1.06l-1.591 1.59a.75.75 0 001.06 1.061l1.591-1.59zM6 12a.75.75 0 01-.75.75H3a.75.75 0 010-1.5h2.25A.75.75 0 016 12zM6.697 7.757a.75.75 0 001.06-1.06l-1.59-1.591a.75.75 0 00-1.061 1.06l1.59 1.591z"/>
-            </svg>
-          ) : (
-            <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-              <path fillRule="evenodd" d="M9.528 1.718a.75.75 0 01.162.819A8.97 8.97 0 009 6a9 9 0 009 9 8.97 8.97 0 003.463-.69.75.75 0 01.981.98 10.503 10.503 0 01-9.694 6.46c-5.799 0-10.5-4.701-10.5-10.5 0-4.368 2.667-8.112 6.46-9.694a.75.75 0 01.818.162z" clipRule="evenodd"/>
-            </svg>
-          )}
+          <IcoMenu />
         </button>
-        {/* API status badge */}
-        <div className={`hidden sm:flex items-center gap-2 rounded-full px-3 py-1.5 ${apiStatus === 'online' ? 'bg-emerald-50 border border-emerald-200' : apiStatus === 'checking' ? 'bg-slate-100' : 'bg-rose-50 border border-rose-200'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${apiStatus === 'online' ? 'bg-emerald-500' : apiStatus === 'checking' ? 'bg-slate-400' : 'bg-rose-500'}`}/>
-          <span className={`text-xs font-semibold ${apiStatus === 'online' ? 'text-emerald-700' : apiStatus === 'checking' ? 'text-slate-500' : 'text-rose-700'}`}>
-            {apiStatus === 'online' ? 'API Activa' : apiStatus === 'checking' ? 'Verificando API...' : 'API Inactiva'}
-          </span>
-          <span className="text-[10px] text-slate-400">
-            {apiStatus === 'online'
-              ? 'Conexión establecida'
-              : apiStatus === 'checking'
-                ? 'Espere un momento'
-                : 'No se pudo conectar'}
-          </span>
+
+        <div className="relative min-w-0">
+          <h1 className="truncate font-[Inter,system-ui,sans-serif] text-[13px] font-bold leading-tight text-[#0d1424] dark:text-slate-100">
+            AgroScan <span className="font-semibold text-[#0c6532] dark:text-emerald-400">/ {title}</span>
+          </h1>
+          <p className="mt-[3px] flex items-center gap-1.5 truncate text-[11px] text-[#4b556c] dark:text-slate-400">
+            <span className="text-[#384862] dark:text-slate-500"><IcoCalendar /></span>
+            {longDate(new Date())}
+          </p>
         </div>
 
-        {menuOpen && <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />}
+        <span className={`relative ml-4 hidden h-[23px] shrink-0 items-center gap-1.5 rounded-full px-2.5 text-[10.5px] font-semibold sm:inline-flex ${api.pill}`}>
+          <span className={`h-[7px] w-[7px] rounded-full ${api.dot}`} />
+          {api.label}
+        </span>
 
-        <div className="relative z-20">
-          <button
-            type="button"
-            onClick={() => { setMenuOpen((open) => !open); setWeatherOpen(false) }}
-            className="flex items-center gap-2 rounded-full border border-slate-200 pr-3 pl-0.5 py-0.5 hover:bg-slate-50 transition"
-          >
-            <div className="w-7 h-7 rounded-full bg-gradient-to-br from-violet-500 to-blue-500 flex items-center justify-center text-white text-[10px] font-black">
-              {userName ? userName.charAt(0).toUpperCase() : 'U'}
-            </div>
-            <span className="hidden text-xs font-semibold text-slate-700 sm:inline">{userName}</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="w-3 h-3 text-slate-400"><path d="M19 9l-7 7-7-7"/></svg>
-          </button>
+        {weather && <WeatherPill weather={weather} />}
 
-          {menuOpen && (
-            <div className="absolute right-0 top-full mt-3 w-72 rounded-2xl border border-slate-200 bg-white text-left shadow-xl shadow-slate-200/40 overflow-hidden">
-
-              {/* Cabecera con avatar */}
-              <div className="px-5 py-5" style={{ background: 'linear-gradient(135deg, #ede9fe 0%, #dbeafe 60%, #dcfce7 100%)' }}>
-                <div className="flex items-center gap-4">
-                  <div
-                    className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-xl font-black flex-shrink-0 shadow-lg"
-                    style={{ background: 'linear-gradient(135deg, #7c3aed, #3b82f6)' }}
-                  >
-                    {userName ? userName.charAt(0).toUpperCase() : 'U'}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="font-black text-slate-900 text-base truncate">{userName}</p>
-                    <p className="text-xs text-slate-500 truncate mt-0.5">{userEmail || '—'}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Detalles del usuario */}
-              <div className="px-5 py-4 space-y-3 border-b border-slate-100">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Nombre</span>
-                  <span className="text-xs font-bold text-slate-700">{userName}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Correo</span>
-                  <span className="text-xs font-bold text-slate-700 truncate max-w-[160px]">{userEmail || '—'}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-slate-400">Rol</span>
-                  <span
-                    className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold capitalize"
-                    style={{ background: '#ede9fe', color: '#5b21b6', border: '1px solid #c4b5fd' }}
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-violet-500"/>
-                    {roleLabel(userRol)}
-                  </span>
-                </div>
-              </div>
-
-              {/* Acciones */}
-              <div className="px-3 py-2 border-b border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => { setMenuOpen(false); setPage('perfil') }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-slate-700 hover:bg-slate-50 transition"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-slate-400 flex-shrink-0">
-                    <path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
-                  </svg>
-                  Mi perfil
-                </button>
-              </div>
-
-              {/* Cerrar sesión */}
-              <div className="px-3 py-2">
-                <button
-                  type="button"
-                  onClick={() => { setMenuOpen(false); onLogout() }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-rose-600 hover:bg-rose-50 transition"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 flex-shrink-0">
-                    <path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
-                  </svg>
-                  Cerrar sesión
-                </button>
-              </div>
-            </div>
-          )}
+        <div className="relative ml-auto flex shrink-0 items-center gap-4">
+          <AlertsBell history={history} onOpenHistorial={() => onGoHistorial('individual')} consultas={consultas} onOpenConsulta={onOpenConsulta} />
+          <UserMenu userName={userName} userEmail={userEmail} userRol={userRol} onLogout={onLogout} onProfile={() => setPage('perfil')} />
         </div>
       </div>
     </header>
@@ -754,21 +931,6 @@ function SeverityBadge({ level }) {
   const s = map[level] || map.Media
   return (
     <span className="inline-block text-[11px] font-bold px-2.5 py-0.5 rounded-full" style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
-      {level}
-    </span>
-  )
-}
-
-function SeverityLevelBadge({ level }) {
-  const map = {
-    Sano:     { bg: '#e2e8f0', color: '#475569', border: '#cbd5e1' },
-    Leve:     { bg: '#ecfdf5', color: '#15803d', border: '#bbf7d0' },
-    Moderada: { bg: '#fef3c7', color: '#b45309', border: '#fde68a' },
-    Grave:    { bg: '#fee2e2', color: '#b91c1c', border: '#fecaca' },
-  }
-  const s = map[level] || map.Sano
-  return (
-    <span className="inline-flex items-center rounded-full px-3 py-1 text-[11px] font-semibold" style={{ background: s.bg, color: s.color, border: `1px solid ${s.border}` }}>
       {level}
     </span>
   )
@@ -957,16 +1119,6 @@ function WeatherBanner({ weather }) {
 }
 
 // ── Parcel disease maps (shared shape with Historial.jsx) ─────────────────────
-const PARCEL_LABELS = {
-  Fondo_y_Sana: 'Sano', Fondo: 'Sano',
-  Tizon: 'Tizón', Roya: 'Roya',
-  Mancha_Blanca: 'Mancha Blanca', Mancha_blanca: 'Mancha Blanca',
-}
-const PARCEL_COLORS = {
-  Fondo_y_Sana: '#22c55e', Fondo: '#22c55e',
-  Tizon: '#f97316', Roya: '#f59e0b',
-  Mancha_Blanca: '#ef4444', Mancha_blanca: '#ef4444',
-}
 function useParcelHistory() {
   const [records, setRecords] = useState(() => loadParcelHistory())
   useEffect(() => {
@@ -988,377 +1140,547 @@ function useParcelaSummaries() {
   return summaries
 }
 
-// ── Parcel mini card ──────────────────────────────────────────────────────────
-function ParcelMiniCard({ summary, isDark, onClick }) {
-  const { nombre, ha, visits, lastVisit, createdAt } = summary
-  const stats = lastVisit?.stats ?? { dominant: null, avgAff: 0, total: 0 }
-  const domLabel = stats.dominant ? (PARCEL_LABELS[stats.dominant] ?? stats.dominant) : 'Sano'
-  const domColor = stats.dominant ? (PARCEL_COLORS[stats.dominant] ?? '#94a3b8') : '#22c55e'
-  const severityLevel = lotSeverity(stats.avgAff)
-  const dateLabel = new Date(lastVisit?.fecha ?? createdAt)
+// Iconos de los botones del banner de Inicio
+const IcoDrone = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" className="h-[15px] w-[15px] shrink-0">
+    <rect x="9" y="9.5" width="6" height="5" rx="1.3"/><path d="M9.5 10 6.5 7.5M14.5 10l3-2.5M9.5 14l-3 2.5M14.5 14l3 2.5"/><path d="M3.5 6.5h6M14.5 6.5h6M3.5 17.5h6M14.5 17.5h6"/>
+  </svg>
+)
+const IcoParcelGrid = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0">
+    <path d="M6 5h12l3 14H3L6 5Z"/><path d="M10 5 9 19M14 5l1 14M4.6 12h14.8"/>
+  </svg>
+)
+const IcoArrowRight = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3 shrink-0">
+    <path d="M5 12h14M13 6l6 6-6 6"/>
+  </svg>
+)
 
+// ── HomePage ──────────────────────────────────────────────────────────────────
+// Panel de Inicio de la maqueta del usuario: banner, tres indicadores con su tendencia semanal,
+// último análisis, distribución de detecciones y actividad reciente. Todo sale de datos
+// reales: el historial de análisis individuales (API) y las visitas de parcela guardadas en
+// este navegador. Medidas a la escala en que el usuario ve la maqueta (~0,68).
+
+// Serie diaria de los últimos `days` días (de más antiguo a hoy) a partir de eventos { fecha, n }
+function dailySeries(events, days = 14) {
+  const out = Array(days).fill(0)
+  events.forEach(({ fecha, n = 1 }) => {
+    const idx = days - 1 - daysAgo(fecha)
+    if (idx >= 0 && idx < days) out[idx] += n
+  })
+  return out
+}
+// Totales por semana de las últimas `weeks` semanas (la última = los 7 días hasta hoy)
+function weeklySeries(events, weeks = 8) {
+  const out = Array(weeks).fill(0)
+  events.forEach(({ fecha, n = 1 }) => {
+    const idx = weeks - 1 - Math.floor(daysAgo(fecha) / 7)
+    if (idx >= 0 && idx < weeks) out[idx] += n
+  })
+  return out
+}
+const sum = (arr) => arr.reduce((a, b) => a + b, 0)
+
+// Porcentajes enteros que suman 100 (método del mayor resto)
+function percentages(values) {
+  const total = sum(values)
+  if (!total) return values.map(() => 0)
+  const raw = values.map((v) => (v / total) * 100)
+  const out = raw.map(Math.floor)
+  let rest = 100 - sum(out)
+  raw.map((v, i) => [v - out[i], i]).sort((a, b) => b[0] - a[0]).forEach(([, i]) => { if (rest > 0) { out[i] += 1; rest -= 1 } })
+  return out
+}
+
+const IcoBars = () => (
+  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <rect x="4.5" y="12" width="3.6" height="7.5" rx="1.1"/><rect x="10.2" y="8" width="3.6" height="11.5" rx="1.1"/><rect x="15.9" y="4.5" width="3.6" height="15" rx="1.1"/>
+  </svg>
+)
+const IcoImageFrame = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="10" r="1.7"/><path d="m4 17.5 5-5 4 4 2.5-2.5 4.5 4.5"/>
+  </svg>
+)
+const IcoShieldCheck = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 3 19 6v5.5c0 4.4-3 8.1-7 9.5-4-1.4-7-5.1-7-9.5V6l7-3Z"/><path d="m9 12 2.2 2.2L15.5 10"/>
+  </svg>
+)
+const IcoSprout = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 shrink-0">
+    <path d="M11.4 20.6C11 15.4 8.4 12 3.2 11.2c.3 4.8 3.4 8.2 8.2 9.4Z" fill="#14a35d"/>
+    <path d="M12.6 20.6c.2-6.6 2.8-11.6 8.3-14.8.9 6.8-2.1 12.5-8.3 14.8Z" fill="#05803f"/>
+    <path d="M12 21v-3.5" stroke="#05803f" strokeWidth="1.6" strokeLinecap="round"/>
+  </svg>
+)
+const IcoPie = () => (
+  <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 shrink-0">
+    <path d="M11 3.1a9 9 0 1 0 9.9 9.9H11Z" fill="#05803f"/><path d="M13 2.1V11h8.9A9 9 0 0 0 13 2.1Z" fill="#14a35d"/>
+  </svg>
+)
+const IcoHistoryArrow = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-[18px] w-[18px] shrink-0">
+    <path d="M3.5 12a8.5 8.5 0 1 0 2.6-6.1L3.5 8.5"/><path d="M3.5 3.5v5h5"/><path d="M12 7.5V12l3 2"/>
+  </svg>
+)
+const IcoClockSm = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="h-3.5 w-3.5 shrink-0">
+    <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+  </svg>
+)
+
+// Estilo de cada indicador (colores muestreados de la maqueta)
+const HOME_STATS = [
+  { key: 'analisis', label: 'Análisis realizados', Icon: IcoBars, spark: '#16a35a',
+    card: 'border-[#dcefe5] bg-[#f2f9f6] dark:border-emerald-400/15 dark:bg-emerald-400/[0.05]',
+    halo: 'bg-[#c9ecd8] dark:bg-emerald-400/15', solid: 'from-[#13a35c] to-[#03823f]' },
+  { key: 'imagenes', label: 'Imágenes procesadas', Icon: IcoImageFrame, spark: '#2f8ef5',
+    card: 'border-[#d7e8fb] bg-[#ecf5fe] dark:border-sky-400/15 dark:bg-sky-400/[0.05]',
+    halo: 'bg-[#cfe4fd] dark:bg-sky-400/15', solid: 'from-[#2b95fd] to-[#0473e8]' },
+  { key: 'enfermedades', label: 'Enfermedades identificadas', Icon: IcoShieldCheck, spark: '#a35cf0',
+    card: 'border-[#e3daf9] bg-[#f3effe] dark:border-violet-400/15 dark:bg-violet-400/[0.05]',
+    halo: 'bg-[#e4d7fd] dark:bg-violet-400/15', solid: 'from-[#9150fb] to-[#7430ec]' },
+]
+
+function ResultBadge({ resultKey }) {
+  const s = RESULT_STYLE[resultKey] ?? RESULT_STYLE.otro
   return (
-    <button
-      onClick={onClick}
-      className={`flex-shrink-0 w-56 text-left rounded-2xl border p-4 shadow-sm hover:shadow-md transition-all active:scale-[0.98] ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-100'}`}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg" style={{ background: isDark ? '#0e1929' : '#f1f5f9' }}>🛰️</div>
-        <SeverityLevelBadge level={severityLevel} />
-      </div>
-      <p className={`text-sm font-bold truncate ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{nombre}</p>
-      <p className={`text-lg font-black ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>{ha} ha</p>
-      <div className="flex items-center gap-1.5 mt-1">
-        <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: domColor }} />
-        <span className={`text-xs font-semibold truncate ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{domLabel}</span>
-      </div>
-      <div className={`flex items-center justify-between mt-3 pt-3 border-t text-[11px] ${isDark ? 'border-[#1e3048] text-slate-500' : 'border-slate-100 text-slate-400'}`}>
-        <span>{visits.length} visita{visits.length !== 1 ? 's' : ''}</span>
-        <span>{dateLabel.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })}</span>
-      </div>
-    </button>
+    <span className={`inline-flex h-6 max-w-full items-center gap-1.5 rounded-full pl-1.5 pr-2.5 text-[10.5px] font-semibold ${s.chip}`}>
+      <span className={`grid h-[13px] w-[13px] shrink-0 place-items-center rounded-full text-white ${s.icon}`}>
+        {resultKey === 'sano' ? (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" className="h-2 w-2"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+        ) : (
+          <span className="text-[9px] font-black leading-none">!</span>
+        )}
+      </span>
+      <span className="truncate">{s.text}</span>
+    </span>
   )
 }
 
-// ── HomePage ──────────────────────────────────────────────────────────────────
-function HomePage({ setPage, apiStatus, history, weather, onGoAnalizar, onGoHistorial }) {
+// Variación de los últimos 7 días frente a los 7 anteriores
+function TrendChip({ cur, prev }) {
+  const up = cur >= prev
+  const text = prev > 0 ? `${up ? '+' : '−'}${Math.round((Math.abs(cur - prev) / prev) * 100)}%` : cur > 0 ? `+${cur}` : '+0%'
+  return (
+    <span
+      title={`Últimos 7 días: ${cur} · 7 días anteriores: ${prev}`}
+      className={`inline-flex items-center gap-0.5 text-[10px] font-semibold ${up ? 'text-[#0b8a4b] dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`h-2.5 w-2.5 ${up ? '' : 'rotate-180'}`}>
+        <path d="M12 19V5M6 11l6-6 6 6"/>
+      </svg>
+      {text}
+    </span>
+  )
+}
+
+// Curva suave con relleno degradado (Catmull-Rom → Bézier), como las de la maqueta
+function AreaSparkline({ data, color, id }) {
+  const w = 120, h = 30
+  const max = Math.max(1, ...data)
+  const pts = data.map((v, i) => [(i / (data.length - 1)) * w, h - 3 - (v / max) * (h - 9)])
+  const clampY = (y) => Math.min(h - 1, Math.max(1, y))
+  let d = `M${pts[0][0]},${pts[0][1]}`
+  for (let i = 0; i < pts.length - 1; i += 1) {
+    const p0 = pts[i - 1] ?? pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] ?? p2
+    d += ` C${p1[0] + (p2[0] - p0[0]) / 6},${clampY(p1[1] + (p2[1] - p0[1]) / 6)} ${p2[0] - (p3[0] - p1[0]) / 6},${clampY(p2[1] - (p3[1] - p1[1]) / 6)} ${p2[0]},${p2[1]}`
+  }
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden="true" className="h-full w-full overflow-visible">
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.26"/>
+          <stop offset="100%" stopColor={color} stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <path d={`${d} L${w},${h} L0,${h} Z`} fill={`url(#${id})`}/>
+      <path d={d} fill="none" stroke={color} strokeWidth="1.6" strokeLinecap="round" vectorEffect="non-scaling-stroke"/>
+    </svg>
+  )
+}
+
+// Anillo de la distribución: empieza arriba, sentido horario, con la mazorca en el centro
+function DetectionDonut({ slices }) {
+  const size = 128, stroke = 23, r = (size - stroke) / 2, c = 2 * Math.PI * r
+  const total = sum(slices.map((s) => s.value))
+  let acc = 0
+  return (
+    <div className="relative h-32 w-32 shrink-0">
+      <svg viewBox={`0 0 ${size} ${size}`} className="h-full w-full -rotate-90" aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-slate-100 dark:stroke-white/5"/>
+        {total > 0 && slices.map((s) => {
+          const len = (s.value / total) * c
+          const gap = slices.length > 1 ? 1.5 : 0
+          const arc = (
+            <circle key={s.key} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={s.color} strokeWidth={stroke}
+              strokeDasharray={`${Math.max(len - gap, 0)} ${c}`} strokeDashoffset={-acc}/>
+          )
+          acc += len
+          return arc
+        })}
+        {/* Borde exterior muy suave: define el anillo cuando un tramo es claro (crema) sobre blanco */}
+        <circle cx={size / 2} cy={size / 2} r={size / 2 - 0.5} fill="none" strokeWidth="1" className="stroke-black/[0.08] dark:stroke-white/[0.08]"/>
+      </svg>
+      <div className="absolute inset-[23px] grid place-items-center rounded-full border border-[#eef1f4] bg-white shadow-[0_4px_12px_-6px_rgba(15,40,30,0.3)] dark:border-white/10 dark:bg-[#0f1a2b]">
+        <img src={inicioMazorca} alt="" draggable="false" className="h-[52px] w-auto select-none"/>
+      </div>
+    </div>
+  )
+}
+
+// Imagen del análisis completa dentro de un cuadro: la de salida (original + área afectada +
+// caja + etiqueta, guardada al analizar) o la original. Nunca se recorta (object-contain); el
+// sobrante del cuadro se rellena con la misma imagen ampliada y desenfocada.
+function AnalysisSquare({ result, original, alt }) {
+  const [view, setView] = useState(result ? 'result' : 'original')
+  const [broken, setBroken] = useState(false)
+  const src = view === 'result' ? (result || original) : (original || result)
+  return (
+    <div className="relative mx-auto aspect-square w-full max-w-[240px] shrink-0 overflow-hidden rounded-[10px] bg-[#1d2a22] ring-1 ring-black/5 sm:mx-0 sm:w-[176px] dark:ring-white/10">
+      {src && !broken ? (
+        <>
+          <img src={src} alt="" aria-hidden="true" draggable="false" className="absolute inset-0 h-full w-full scale-110 select-none object-cover opacity-80 blur-md"/>
+          <img key={src} src={src} alt={alt} className="relative h-full w-full object-contain" onError={() => setBroken(true)}/>
+        </>
+      ) : (
+        <div className="grid h-full place-items-center bg-[#eef3ef] px-3 text-center text-[10.5px] text-[#55656f] dark:bg-white/5 dark:text-slate-400">Imagen no disponible</div>
+      )}
+      {result && original && (
+        <div className="absolute inset-x-0 bottom-1.5 flex justify-center">
+          <div role="group" aria-label="Imagen mostrada" className="inline-flex rounded-full bg-white/90 p-0.5 shadow-sm backdrop-blur-sm dark:bg-[#0f1a2b]/85">
+            {[['result', 'Resultado'], ['original', 'Original']].map(([v, label]) => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={view === v}
+                onClick={() => { setView(v); setBroken(false) }}
+                className={`rounded-full px-2 py-[3px] text-[9.5px] font-semibold transition ${view === v ? 'bg-[#02894b] text-white' : 'text-[#1d2640] hover:bg-black/5 dark:text-slate-200 dark:hover:bg-white/10'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Diagnóstico junto a la imagen: enfermedad, severidad, área afectada y la recomendación
+// principal del catálogo
+function AnalysisSummary({ item, resultKey, onOpen }) {
   const { isDark } = useTheme()
-  const [selectedAnalysisId, setSelectedAnalysisId] = useState(null)
+  const healthy = resultKey === 'sano'
+  const meta = diseaseMeta(item.enfermedad)
+  const pct = Number(item.affectedPercent ?? 0)
+  const rec = recommendationsFor(healthy ? 'Fondo' : item.enfermedad)[0]
+  return (
+    <div className="min-w-0 flex-1 pr-2">
+      <div className="flex items-center gap-2">
+        <span className="h-2.5 w-2.5 shrink-0 rounded-full ring-1 ring-black/10 dark:ring-white/10" style={{ background: resultColor(resultKey, isDark) }}/>
+        <p className="truncate font-[Manrope,Inter,sans-serif] text-[15px] font-extrabold text-[#0b1226] dark:text-white">{healthy ? 'Cultivo sano' : meta.label}</p>
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        <span className={`inline-flex h-5 items-center rounded-full px-2 text-[10px] font-bold ${SEVERITY_CHIP[item.severidad] ?? SEVERITY_CHIP.Leve}`}>{item.severidad}</span>
+        <span className="text-[10.5px] text-[#55656f] dark:text-slate-400">
+          {healthy ? 'Sin síntomas de enfermedad' : `${pct.toFixed(1)} % del área afectada`}
+        </span>
+      </div>
+      {!healthy && <SeverityScale pct={pct}/>}
+      {rec && (
+        <div className="mt-2.5 rounded-lg bg-[#f4f8f5] px-2.5 py-1.5 dark:bg-white/[0.04]">
+          <p className="text-[9.5px] font-bold uppercase tracking-wide text-[#0b6b35] dark:text-emerald-400">Recomendación</p>
+          <p className="mt-0.5 line-clamp-2 text-[10.5px] leading-snug text-[#334155] dark:text-slate-300">
+            <span className="font-semibold">{rec.title}:</span> {rec.body}
+          </p>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onOpen}
+        className="mt-2.5 inline-flex h-[26px] items-center gap-1.5 rounded-[9px] bg-[#02894b] px-3 text-[10.5px] font-semibold text-white shadow-[0_6px_12px_-8px_rgba(2,137,75,0.8)] transition hover:bg-[#027a42] [&>svg:first-child]:h-[13px] [&>svg:first-child]:w-[13px]"
+      >
+        <IcoEye/>
+        Ver diagnóstico
+        <IcoArrowRight/>
+      </button>
+    </div>
+  )
+}
+
+const HOME_CARD = 'rounded-xl border border-[#e6ebf0] bg-white shadow-[0_6px_18px_-14px_rgba(15,40,30,0.28)] dark:border-[#1e3048] dark:bg-[#162032]'
+const HOME_TITLE = 'font-[Manrope,Inter,sans-serif] text-[14px] font-extrabold text-[#0b1226] dark:text-white'
+
+function HomePage({ onGoAnalizar, onGoHistorial, history }) {
+  const { isDark } = useTheme()
   const parcelHistory = useParcelHistory()
   const parcelaSummaries = useParcelaSummaries()
+  const [selectedId, setSelectedId] = useState(null)
+  const lastCardRef = useRef(null)
 
-  const totalAnalyses = history.length
-  const diseasedCount = history.filter((item) => item.estado === 'Con enfermedad').length
-  const healthyCount = history.filter((item) => item.estado === 'Sano').length
-  const totalParcelas = parcelaSummaries.length
-  const totalHa = parcelaSummaries.reduce((sum, p) => sum + (p.ha ?? 0), 0)
-
+  // ── Indicadores: total, serie diaria de 14 días y tendencia de la última semana
+  const doneSamples = (r) => (r.samples ?? []).filter((s) => s.status === 'done' && s.result)
+  const sickKey = (cls) => { const key = diseaseKey(cls); return key && key !== 'sano' ? key : null }
+  const analysisEvents = [...history.map((h) => ({ fecha: h.fecha })), ...parcelHistory.map((r) => ({ fecha: r.fecha }))]
+  const imageEvents = [...history.map((h) => ({ fecha: h.fecha })), ...parcelHistory.map((r) => ({ fecha: r.fecha, n: doneSamples(r).length }))]
+  const detections = [
+    ...history.map((h) => ({ fecha: h.fecha, key: h.estado === 'Sano' ? null : sickKey(h.enfermedad) })),
+    ...parcelHistory.flatMap((r) => doneSamples(r).map((s) => ({ fecha: r.fecha, key: sickKey(s.result.target_class) }))),
+  ].filter((d) => d.key)
+  const distinctBetween = (lo, hi) => new Set(detections.filter((d) => { const n = daysAgo(d.fecha); return n >= lo && n <= hi }).map((d) => d.key)).size
+  // Tendencia: últimos 7 días frente a los 7 anteriores. Curva: totales de las últimas 8 semanas
+  const week = (events) => { const d = dailySeries(events); return { cur: sum(d.slice(7)), prev: sum(d.slice(0, 7)) } }
   const stats = [
-    { label: 'Imágenes analizadas', value: totalAnalyses, sub: 'Análisis individual', color: '#22c55e', bg: '#f0fdf4', icon: '🌿', data: Array(10).fill(totalAnalyses) },
-    { label: 'Cultivos sanos', value: healthyCount, sub: 'Análisis sanos', color: '#14b8a6', bg: '#ecfeff', icon: '🌱', data: Array(10).fill(healthyCount) },
-    { label: 'Detecciones', value: diseasedCount, sub: 'Con enfermedad', color: '#f59e0b', bg: '#fffbeb', icon: '🔍', data: Array(10).fill(diseasedCount) },
-    { label: 'Parcelas analizadas', value: totalParcelas, sub: 'Lotes con muestreo', color: '#7c3aed', bg: '#f5f3ff', icon: '🛰️', data: Array(10).fill(totalParcelas) },
-    { label: 'Hectáreas monitoreadas', value: totalHa.toFixed(1), sub: 'Superficie total', color: '#0d9488', bg: '#f0fdfa', icon: '🌾', data: Array(10).fill(totalHa) },
+    { ...HOME_STATS[0], value: analysisEvents.length, ...week(analysisEvents), series: weeklySeries(analysisEvents) },
+    { ...HOME_STATS[1], value: sum(imageEvents.map((e) => e.n ?? 1)), ...week(imageEvents), series: weeklySeries(imageEvents) },
+    { ...HOME_STATS[2], value: new Set(detections.map((d) => d.key)).size, cur: distinctBetween(0, 6), prev: distinctBetween(7, 13), series: weeklySeries(detections) },
   ]
 
-  const recentAnalysis = history.map((item, index) => {
-    const confidence = Math.round((item.confianza ?? 0) * 100)
-    const isHealthy = item.estado === 'Sano'
-    return {
-      type: 'individual',
-      id: index + 1,
-      fecha: item.fecha,
-      date: new Date(item.fecha).toLocaleDateString('es-ES'),
-      time: new Date(item.fecha).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }),
-      disease: isHealthy ? 'Sano' : (item.enfermedadLabel ?? item.enfermedad),
-      diseaseColor: isHealthy ? '#15803d' : (item.enfermedad === 'Roya' ? '#f59e0b' : item.enfermedad === 'Mancha_blanca' ? '#8b5cf6' : '#f97316'),
-      severity: isHealthy ? 'Nulo' : item.severidad,
-      severityLevel: item.severidad,
-      confidence,
-      xaiImage: item.xaiImage,
-      affectedPercent: item.affectedPercent,
-      seed: index,
-      raw: item,
-    }
-  })
+  // ── Distribución de resultados: cada imagen analizada (individual o muestra de parcela)
+  // cuenta con su clase, incluida «sano» (clase 0 del modelo)
+  const counts = {}
+  ;[
+    ...history.map((h) => (h.estado === 'Sano' ? 'sano' : diseaseKey(h.enfermedad))),
+    ...parcelHistory.flatMap((r) => doneSamples(r).map((s) => diseaseKey(s.result.target_class))),
+  ].filter(Boolean).forEach((key) => { counts[key] = (counts[key] ?? 0) + 1 })
+  const entries = Object.entries(counts).sort((a, b) => b[1] - a[1])
+  const pcts = percentages(entries.map(([, v]) => v))
+  const distribution = entries.map(([key, value], i) => ({ key, value, pct: pcts[i], label: DISEASES[key].short, color: resultColor(key, isDark) }))
 
-  const parcelRows = parcelHistory.map((r) => {
-    const domLabel = r.stats.dominant ? (PARCEL_LABELS[r.stats.dominant] ?? r.stats.dominant) : 'Sano'
-    const domColor = r.stats.dominant ? (PARCEL_COLORS[r.stats.dominant] ?? '#94a3b8') : '#22c55e'
-    return {
-      type: 'parcela',
-      id: r.id,
-      fecha: r.fecha,
-      date: new Date(r.fecha).toLocaleDateString('es-ES'),
-      disease: domLabel,
-      diseaseColor: domColor,
-      severityLevel: lotSeverity(r.stats.avgAff),
-      affectedPercent: r.stats.avgAff,
-      ha: r.ha,
-      sampleCount: r.stats.total,
-      raw: r,
-    }
-  })
+  // ── Último análisis individual (o el que se eligió con «Ver» en la tabla)
+  const byDate = [...history].sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+  const latest = byDate[0] ?? null
+  const shown = (selectedId != null && history.find((h) => h.id === selectedId)) || latest
+  const showingLatest = !shown || shown === latest
+  const shownKey = shown ? resultKeyOf(shown.enfermedad, shown.estado === 'Sano') : null
 
-  const combinedActivity = [...recentAnalysis, ...parcelRows].sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+  // ── Actividad reciente: análisis individuales y visitas de parcela, lo más nuevo primero
+  const parcelName = (r) => parcelaSummaries.find((p) => p.id === r.parcelaId)?.nombre ?? 'Parcela'
+  const activity = [
+    ...history.map((h) => ({ kind: 'individual', id: `i-${h.id}`, fecha: h.fecha, h })),
+    ...parcelHistory.map((r) => ({ kind: 'parcela', id: `p-${r.id}`, fecha: r.fecha, r })),
+  ].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 5)
 
-  useEffect(() => {
-    if (recentAnalysis.length === 0) {
-      setSelectedAnalysisId(null)
-      return
-    }
-    if (!recentAnalysis.some((row) => row.id === selectedAnalysisId)) {
-      setSelectedAnalysisId(recentAnalysis[0].id)
-    }
-  }, [recentAnalysis, selectedAnalysisId])
-
-  const selectedAnalysis = recentAnalysis.find((row) => row.id === selectedAnalysisId) || recentAnalysis[0] || null
-
-  const diseaseDistribution = (() => {
-    const counts = {}
-    history.forEach((item) => {
-      if (item.estado === 'Sano') return
-      const label = item.enfermedadLabel ?? item.enfermedad
-      counts[label] = (counts[label] ?? 0) + 1
-    })
-    parcelHistory.forEach((r) => {
-      r.samples.forEach((s) => {
-        if (!s.result) return
-        const cls = s.result.target_class
-        if (cls === 'Fondo_y_Sana' || cls === 'Fondo') return
-        const label = PARCEL_LABELS[cls] ?? cls
-        counts[label] = (counts[label] ?? 0) + 1
-      })
-    })
-    const palette = { Tizón: '#f97316', Roya: '#f59e0b', 'Mancha Blanca': '#8b5cf6' }
-    return Object.entries(counts).map(([label, value]) => ({ label, value, color: palette[label] ?? '#94a3b8' }))
-  })()
+  const viewRow = (row) => {
+    if (row.kind === 'parcela') { onGoHistorial('parcelas'); return }
+    setSelectedId(row.h.id)
+    lastCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  }
 
   return (
-    <div className="space-y-5">
-      {/* ── Hero ── */}
-      <div className="relative overflow-hidden rounded-2xl" style={{ backgroundImage: `linear-gradient(90deg, rgba(124,58,237,0.22) 0%, rgba(124,58,237,0.18) 40%, rgba(96,165,250,0.18) 60%, rgba(96,165,250,0.12) 70%, rgba(96,165,250,0) 100%), url(${foto3})`, backgroundSize: 'cover', backgroundPosition: 'center', minHeight: '260px' }}>
-        {/* decorative circles */}
-        <div className="absolute -top-10 -right-10 w-64 h-64 rounded-full opacity-30" style={{ background: 'radial-gradient(circle, #a78bfa, transparent 70%)' }}/>
-        <div className="absolute bottom-0 left-1/2 w-48 h-48 rounded-full opacity-20" style={{ background: 'radial-gradient(circle, #60a5fa, transparent 70%)' }}/>
+    <div className="space-y-3">
+      {/* ── Hero (maqueta del usuario): foto del dron con cristal esmerilado a la izquierda ── */}
+      <section className="relative overflow-hidden rounded-2xl border border-[#dbe8df] shadow-[0_14px_30px_-24px_rgba(15,60,40,0.55)] dark:border-white/10">
+        <img src={heroDron} alt="" aria-hidden="true" draggable="false" className="absolute inset-0 h-full w-full select-none object-cover object-left dark:brightness-[0.45]" />
+        {/* Si el banner es estrecho el texto queda sobre la foto: velo para que se lea */}
+        <div className="absolute inset-0 bg-linear-to-r from-white/80 via-white/55 to-white/10 lg:hidden dark:hidden" />
+        <div className="absolute inset-0 hidden bg-linear-to-r from-[#0c1220]/90 via-[#0c1220]/60 to-[#0c1220]/10 dark:block" />
 
-        <div className="relative flex items-center gap-0 h-full">
-          {/* Left content */}
-          <div className="flex-1 p-8 md:p-10 z-10">
-            <div className="inline-flex items-center gap-2 rounded-full bg-white/70 border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 mb-5">
-              <span className={`w-1.5 h-1.5 rounded-full ${apiStatus === 'online' ? 'bg-emerald-500' : apiStatus === 'checking' ? 'bg-slate-400' : 'bg-rose-500'}`}/>
-              {apiStatus === 'online'
-                ? 'API Activa · Detección en imágenes'
-                : apiStatus === 'checking'
-                  ? 'Verificando API · Detección en imágenes'
-                  : 'API Inactiva · Detección en imágenes'}
-            </div>
-            <h1 className="text-2xl md:text-4xl font-black text-slate-900 leading-tight mb-3">
-              Detección inteligente<br/>
-              de <span className="text-violet-600">enfermedades</span>{' '}
-              <span className="text-green-500">en maíz</span>
-            </h1>
-            <div className="mb-6 max-w-sm rounded-2xl bg-white/90 border border-white/80 p-4 shadow-sm">
-              <p className="text-sm text-slate-600 leading-relaxed">
-                Plataforma de inteligencia artificial para el análisis de cultivos
-                a partir de imágenes captadas con drones o cámaras. Detecta Tizón, Roya y Mancha Blanca
-                con explicabilidad visual Grad-CAM.
-              </p>
-            </div>
-            <div className="flex gap-3 flex-wrap">
+        <div className="relative flex items-start gap-3.5 px-4 pb-3 pt-5 sm:pl-[13px] sm:pr-6">
+          <img src={heroInsignia} alt="" aria-hidden="true" draggable="false" className="-mt-[7px] hidden h-[66px] w-[66px] shrink-0 select-none drop-shadow-[0_6px_10px_rgba(15,60,40,0.16)] sm:block" />
+          <div className="min-w-0">
+            <h2 className="text-[23px] font-extrabold leading-tight text-[#0b1226] dark:text-white">Panel de diagnóstico</h2>
+            <p className="mt-1 text-[11.5px] leading-snug text-[#1d2640] dark:text-slate-300">
+              Supervisa la salud de tus cultivos de maíz con inteligencia artificial.
+            </p>
+            <div className="mt-3.5 flex flex-wrap gap-3.5">
               <button
+                type="button"
                 onClick={() => onGoAnalizar('individual')}
-                className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 font-bold text-sm text-white transition-all active:scale-95"
-                style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)', boxShadow: '0 6px 20px rgba(109,40,217,0.35)' }}
+                className="inline-flex h-[30px] items-center gap-2 rounded-[11px] bg-[#02894b] px-4 text-[11.5px] font-semibold text-white shadow-[0_8px_16px_-8px_rgba(2,137,75,0.7)] transition hover:bg-[#027a42] active:scale-[0.98]"
               >
-                <IcoUpload />
-                Cargar imagen
+                <IcoDrone />
+                Nuevo análisis
+                <IcoArrowRight />
               </button>
               <button
+                type="button"
                 onClick={() => onGoAnalizar('parcela')}
-                className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 font-semibold text-sm text-slate-700 bg-white/90 border border-slate-200 hover:bg-white transition-all"
+                className="inline-flex h-[30px] items-center gap-2 rounded-[11px] border border-[#8ccf9f] bg-white/75 px-4 text-[11.5px] font-semibold text-[#0f3d26] backdrop-blur-sm transition hover:bg-white active:scale-[0.98] dark:border-emerald-400/40 dark:bg-white/10 dark:text-emerald-100 dark:hover:bg-white/15"
               >
-                🛰️ Analizar parcela
-              </button>
-              <button
-                onClick={() => setPage('historial')}
-                className="inline-flex items-center gap-2 rounded-xl px-5 py-2.5 font-semibold text-sm text-slate-700 bg-white/90 border border-slate-200 hover:bg-white transition-all"
-              >
-                <IcoEye />
-                Ver historial
+                <span className="text-[#0b6b35] dark:text-emerald-300"><IcoParcelGrid /></span>
+                Analizar parcela
               </button>
             </div>
           </div>
-
         </div>
-      </div>
+      </section>
 
-      {weather && <WeatherBanner weather={weather} />}
-
-      {/* ── Stats ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-        {stats.map((s, i) => (
-          <div key={i} className={`rounded-2xl border p-5 shadow-sm hover:shadow-md transition-shadow ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-100'}`}>
-            <div className="flex items-center justify-between mb-3">
-              <div className="w-9 h-9 rounded-xl flex items-center justify-center text-lg" style={{ background: s.bg }}>
-                {s.icon}
+      {/* ── Indicadores ── */}
+      <div className="grid gap-2.5 md:grid-cols-3">
+        {stats.map((s) => (
+          <div key={s.key} className={`flex h-[61px] items-center gap-4 overflow-hidden rounded-xl border pl-[13px] pr-3 ${s.card}`}>
+            {/* El texto conserva su ancho; la curva ocupa el espacio que sobre (y desaparece si no hay) */}
+            <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-full ${s.halo}`}>
+              <span className={`grid h-9 w-9 place-items-center rounded-full bg-linear-to-b text-white shadow-[0_4px_10px_-4px_rgba(0,0,0,0.35)] ${s.solid} [&>svg]:h-[18px] [&>svg]:w-[18px]`}>
+                <s.Icon/>
+              </span>
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[11.5px] font-medium text-[#1d2640] dark:text-slate-300">{s.label}</p>
+              <div className="mt-0.5 flex items-baseline gap-3">
+                <span className="font-[Manrope,Inter,sans-serif] text-[22px] font-extrabold leading-none text-[#0b1226] dark:text-white">{s.value}</span>
+                <TrendChip cur={s.cur} prev={s.prev}/>
               </div>
             </div>
-            <p className="text-2xl font-black" style={{ color: s.color }}>{s.value}</p>
-            <p className={`text-xs font-semibold mt-0.5 ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>{s.label}</p>
-            <p className="text-[11px] text-slate-400">{s.sub}</p>
-            <div className="mt-2">
-              <Sparkline color={s.color} data={s.data}/>
+            <div className="mb-[11px] ml-auto h-[29px] min-w-0 max-w-[170px] flex-1 basis-0 self-end">
+              <AreaSparkline data={s.series} color={s.spark} id={`spark-${s.key}`}/>
             </div>
           </div>
         ))}
       </div>
 
-      {/* ── Bottom row: Recent analysis + Donut ── */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4">
-        {/* Recent activity — combined individual + parcela */}
-        <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-100'}`}>
-          <div className={`flex items-center justify-between px-6 py-4 border-b ${isDark ? 'border-[#1e3048]' : 'border-slate-100'}`}>
-            <div className="flex items-center gap-2">
-              <h2 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>Actividad reciente</h2>
-              {combinedActivity.length > 0 && (
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500">
-                  {combinedActivity.length}
+      {/* ── Último análisis + Distribución de detecciones ── */}
+      <div className="grid gap-[11px] lg:grid-cols-[1.4fr_1fr]">
+        <section ref={lastCardRef} className={`flex scroll-mt-20 flex-col overflow-hidden ${HOME_CARD}`}>
+          <header className="flex min-h-[37px] flex-wrap items-center gap-x-3 gap-y-1 px-[15px] py-1.5">
+            <IcoSprout/>
+            <h3 className={HOME_TITLE}>{showingLatest ? 'Último análisis' : 'Análisis seleccionado'}</h3>
+            {shown && (
+              <div className="ml-auto flex items-center gap-3.5">
+                <span className="inline-flex h-[21px] items-center gap-1.5 rounded-full bg-[#e5f6ee] px-2.5 text-[10px] font-semibold text-[#0a6332] dark:bg-emerald-400/10 dark:text-emerald-300">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[#0f8a4c] dark:bg-emerald-400"/>
+                  Análisis individual
                 </span>
-              )}
-            </div>
-            <button
-              onClick={() => setPage('historial')}
-              className="text-xs font-semibold text-violet-600 hover:text-violet-700 transition"
-            >
-              Ver todo
-            </button>
-          </div>
-          {/* Table header */}
-          <div className={`grid text-[11px] font-bold text-slate-400 uppercase tracking-wider px-6 py-2 border-b ${isDark ? 'bg-[#0e1929] border-[#1e3048]' : 'bg-slate-50 border-slate-100'}`}
-            style={{ gridTemplateColumns: '0.6fr 1fr 1.2fr 0.9fr 1fr' }}>
-            <span>Tipo</span>
-            <span>Fecha</span>
-            <span>Predicción</span>
-            <span>Afectación</span>
-            <span>Severidad</span>
-          </div>
-          <div style={{ maxHeight: 300, overflowY: 'auto' }}
-            className="[&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-slate-50 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300 hover:[&::-webkit-scrollbar-thumb]:bg-slate-400"
-          >
-            {combinedActivity.length === 0 ? (
-              <div className="px-6 py-16 text-center text-slate-500">
-                No hay análisis recientes aún. Suba una imagen o analice una parcela para comenzar.
+                <span className="inline-flex items-center gap-1.5 text-[10.5px] font-medium text-[#1d2640] dark:text-slate-300">
+                  <IcoClockSm/>
+                  {whenLabel(shown.fecha, ' · ')}
+                </span>
               </div>
-            ) : combinedActivity.map((row) => {
-              const isSelected = row.type === 'individual' && row.id === selectedAnalysisId
-              return (
-                <div key={`${row.type}-${row.id}`}
-                  onClick={() => row.type === 'individual' ? setSelectedAnalysisId(row.id) : onGoHistorial('parcelas')}
-                  className={`grid items-center px-6 py-3.5 border-b transition cursor-pointer ${isDark ? 'border-[#1e3048] hover:bg-white/5' : 'border-slate-50 hover:bg-slate-50'} ${isSelected ? (isDark ? 'bg-white/5' : 'bg-slate-50') : ''}`}
-                  style={{ gridTemplateColumns: '0.6fr 1fr 1.2fr 0.9fr 1fr' }}>
-                  <span className="text-base leading-none" title={row.type === 'individual' ? 'Análisis individual' : 'Parcela completa'}>
-                    {row.type === 'individual' ? '🔬' : '🛰️'}
-                  </span>
-                  <span className="text-[11px] text-slate-500">{row.date}</span>
-                  <span className={`text-sm flex items-center gap-1.5 truncate ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: row.diseaseColor }} />
-                    <span className="truncate">{row.disease}</span>
-                    {row.type === 'parcela' && <span className="text-[10px] text-slate-400 flex-shrink-0">({row.ha} ha)</span>}
-                  </span>
-                  <span className="text-sm text-slate-700">
-                    {row.affectedPercent != null ? `${row.affectedPercent}%` : '—'}
-                  </span>
-                  <SeverityLevelBadge level={row.severityLevel}/>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* Disease distribution / XAI preview */}
-        <div className={`rounded-2xl border shadow-sm p-6 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-100'}`}>
-          <h2 className={`font-bold text-sm mb-4 ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
-            {selectedAnalysis ? 'Análisis seleccionado' : 'Distribución de enfermedades'}
-          </h2>
-
-          {selectedAnalysis ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2 text-sm text-slate-600">
-                <span
-                  className="w-2.5 h-2.5 rounded-full"
-                  style={{ background: selectedAnalysis.disease === 'Sano' ? '#15803d' : selectedAnalysis.disease === 'Roya' ? '#f59e0b' : selectedAnalysis.disease === 'Mancha Blanca' ? '#8b5cf6' : '#22c55e' }}
-                />
-                <span className="font-semibold text-slate-800">{selectedAnalysis.disease}</span>
-              </div>
-
-              <div className="rounded-2xl overflow-hidden border border-slate-200 bg-slate-50">
-                {selectedAnalysis.xaiImage ? (
-                  <img src={selectedAnalysis.xaiImage} alt="Mapa XAI" className="w-full h-40 object-cover" />
-                ) : (
-                  <div className="w-full h-40 flex items-center justify-center bg-slate-100 text-slate-400">
-                    Sin mapa XAI disponible
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-2xl border border-slate-200 bg-white p-3 text-center">
-                <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-1">Afectación</p>
-                <p className="text-lg font-bold text-slate-900">
-                  {selectedAnalysis.affectedPercent != null
-                    ? `${selectedAnalysis.affectedPercent}%`
-                    : selectedAnalysis.severity !== 'Nulo'
-                      ? `${selectedAnalysis.confidence}%`
-                      : '0%'}
-                </p>
-              </div>
-            </div>
-          ) : diseaseDistribution.length > 0 ? (
-            <div className="flex flex-col items-center gap-4">
-              <DonutChart slices={diseaseDistribution}/>
-              <div className="mt-4 w-full space-y-2.5">
-                {diseaseDistribution.map((d) => (
-                  <div key={d.label} className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ background: d.color }}/>
-                      <span className="text-xs text-slate-600 font-medium">{d.label}</span>
-                    </div>
-                    <span className="text-xs font-bold text-slate-800">{d.value}</span>
-                  </div>
-                ))}
-              </div>
+            )}
+          </header>
+          {shown ? (
+            <div className="flex flex-1 flex-col gap-3.5 px-2 pb-3 sm:flex-row sm:items-center">
+              <AnalysisSquare
+                key={shown.id}
+                result={shown.resultadoImage}
+                original={shown.imagen}
+                alt={`Análisis: ${shownKey === 'sano' ? 'cultivo sano' : diseaseMeta(shown.enfermedad).label}`}
+              />
+              <AnalysisSummary item={shown} resultKey={shownKey} onOpen={() => onGoHistorial('individual')}/>
             </div>
           ) : (
-            <div className="flex flex-col items-center justify-center text-center gap-2 py-8">
-              <span className="text-3xl">🌿</span>
-              <p className="text-sm font-semibold text-slate-500">Sin detecciones registradas</p>
-              <p className="text-[11px] text-slate-400 max-w-[200px]">Realiza un análisis para ver la distribución de enfermedades aquí.</p>
+            <div className="mx-2 mb-3 grid flex-1 place-items-center rounded-[10px] bg-linear-to-br from-[#e3f2e6] to-[#cfe7d5] px-6 py-8 text-center dark:from-white/5 dark:to-white/[0.02]">
+              <div>
+                <p className="text-[12px] font-semibold text-[#1d2640] dark:text-slate-200">Aún no hay análisis</p>
+                <p className="mt-0.5 text-[10.5px] text-[#55656f] dark:text-slate-400">Sube una imagen para ver aquí su diagnóstico.</p>
+                <button type="button" onClick={() => onGoAnalizar('individual')} className="mt-2.5 inline-flex h-[26px] items-center gap-1.5 rounded-[9px] bg-[#02894b] px-3 text-[10.5px] font-semibold text-white transition hover:bg-[#027a42]">
+                  Nuevo análisis
+                  <IcoArrowRight/>
+                </button>
+              </div>
             </div>
           )}
+        </section>
 
-          <p className="text-[10px] text-slate-400 mt-4 text-center">
-            {selectedAnalysis ? 'ⓘ Mostrando mapa XAI y afectación del análisis seleccionado' : 'ⓘ Detecciones combinadas: análisis individual + muestras de parcela'}
-          </p>
-        </div>
+        <section className={`relative flex flex-col overflow-hidden ${HOME_CARD}`}>
+          <img src={inicioHojas} alt="" aria-hidden="true" draggable="false" className="pointer-events-none absolute bottom-0 right-0 h-[56px] w-auto select-none dark:opacity-10"/>
+          <header className="flex h-[37px] items-center gap-3 px-[15px]">
+            <IcoPie/>
+            <h3 className={HOME_TITLE}>Distribución de detecciones</h3>
+          </header>
+          {distribution.length > 0 ? (
+            <div className="relative flex flex-1 items-center justify-center gap-5 px-5 pb-4 pt-0.5 xl:gap-10">
+              <DetectionDonut slices={distribution}/>
+              <ul className="min-w-0 max-w-[220px] flex-1 space-y-[7px]">
+                {distribution.map((d) => (
+                  <li key={d.key} className="flex items-center gap-2.5 text-[12px] text-[#1d2640] dark:text-slate-200">
+                    <span className="h-[13px] w-[13px] shrink-0 rounded-full ring-1 ring-black/10 dark:ring-white/10" style={{ background: d.color }}/>
+                    <span className="min-w-0 flex-1 truncate whitespace-nowrap font-medium">{d.label}</span>
+                    <span className="font-semibold tabular-nums">{d.pct}%</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="relative grid min-h-[149px] flex-1 place-items-center px-6 text-center">
+              <div>
+                <p className="text-[12px] font-semibold text-[#1d2640] dark:text-slate-200">Aún no hay resultados</p>
+                <p className="mt-0.5 text-[10.5px] text-[#55656f] dark:text-slate-400">Cuando analices imágenes verás aquí qué proporción salió sana y con cada enfermedad.</p>
+              </div>
+            </div>
+          )}
+        </section>
       </div>
 
-      {/* ── Parcelas recientes ── */}
-      <div className={`rounded-2xl border shadow-sm p-6 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-100'}`}>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <h2 className={`font-bold text-sm ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>🛰️ Parcelas recientes</h2>
-            {parcelaSummaries.length > 0 && (
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-500">{parcelaSummaries.length}</span>
-            )}
-          </div>
-          <button
-            onClick={() => onGoHistorial('parcelas')}
-            className="text-xs font-semibold text-violet-600 hover:text-violet-700 transition"
-          >
-            Ver todo
+      {/* ── Actividad reciente ── */}
+      <section className={`overflow-hidden ${HOME_CARD}`}>
+        <header className="flex h-[30px] items-center gap-2.5 px-[15px]">
+          <span className="text-[#0b8a4b] dark:text-emerald-400"><IcoHistoryArrow/></span>
+          <h3 className={`${HOME_TITLE} text-[13.5px]`}>Actividad reciente</h3>
+          <button type="button" onClick={() => onGoHistorial('individual')} className="ml-auto inline-flex items-center gap-1.5 rounded-md text-[10.5px] font-semibold text-[#0b6b35] transition hover:text-[#02894b] hover:underline dark:text-emerald-400">
+            Ver todo el historial
+            <IcoArrowRight/>
           </button>
+        </header>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] table-fixed border-collapse text-left">
+            <colgroup>
+              <col className="w-[24%]"/><col className="w-[20%]"/><col className="w-[17%]"/><col className="w-[25%]"/><col className="w-[14%]"/>
+            </colgroup>
+            <thead className="bg-[#f3f4f8] dark:bg-white/[0.03]">
+              <tr className="h-[22px] text-[10.5px] text-[#5a6478] dark:text-slate-400">
+                <th scope="col" className="pl-[15px] font-medium">Imagen</th>
+                <th scope="col" className="font-medium">Cultivo / parcela</th>
+                <th scope="col" className="font-medium">Fecha</th>
+                <th scope="col" className="font-medium">Resultado</th>
+                <th scope="col" className="pr-[15px] font-medium">Acción</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activity.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-[15px] py-6 text-center text-[11.5px] text-[#55656f] dark:text-slate-400">
+                    Aún no hay actividad. Analiza una imagen o una parcela para empezar.
+                  </td>
+                </tr>
+              ) : activity.map((row) => {
+                const isParcel = row.kind === 'parcela'
+                const resultKey = isParcel
+                  ? visitResultKey(row.r)
+                  : resultKeyOf(row.h.enfermedad, row.h.estado === 'Sano')
+                const selected = !isParcel && shown && row.h.id === shown.id
+                return (
+                  <tr key={row.id} className={`h-8 border-t border-[#f1f3f8] text-[11px] text-[#1d2640] dark:border-white/5 dark:text-slate-200 ${selected ? 'bg-[#f6fbf8] dark:bg-white/[0.03]' : ''}`}>
+                    <td className="pl-[15px]">
+                      <div className="flex items-center gap-[15px]">
+                        {isParcel ? (
+                          <ParcelMiniMap vertices={row.r.vertices} samples={row.r.samples}/>
+                        ) : (
+                          <span className="h-6 w-[53px] shrink-0 overflow-hidden rounded-[4px] bg-[#e3f2e6] dark:bg-white/5">
+                            {row.h.imagen && <img src={row.h.imagen} alt="" loading="lazy" className="h-full w-full object-cover" onError={(e) => { e.currentTarget.style.display = 'none' }}/>}
+                          </span>
+                        )}
+                        <span className="truncate text-[11.5px]">{isParcel ? 'Muestreo de parcela' : 'Análisis individual'}</span>
+                      </div>
+                    </td>
+                    <td className="truncate pr-3">
+                      {isParcel ? `${parcelName(row.r)} · ${row.r.ha} ha` : (row.h.cultivo ?? 'Maíz')}
+                    </td>
+                    <td className="truncate pr-3">{whenLabel(row.fecha, ', ')}</td>
+                    <td className="pr-3"><ResultBadge resultKey={resultKey}/></td>
+                    <td className="pr-[15px]">
+                      <button
+                        type="button"
+                        onClick={() => viewRow(row)}
+                        aria-label={isParcel ? `Ver la parcela ${parcelName(row.r)} en el historial` : `Ver el análisis del ${whenLabel(row.fecha, ' a las ')}`}
+                        className="inline-flex h-6 items-center gap-1.5 rounded-full bg-[#e3f6ec] px-3 text-[10.5px] font-semibold text-[#0b6b35] transition hover:bg-[#d2efdf] dark:bg-emerald-400/10 dark:text-emerald-300 dark:hover:bg-emerald-400/20 [&>svg]:h-[13px] [&>svg]:w-[13px]"
+                      >
+                        <IcoEye/>
+                        Ver
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
-
-        {parcelaSummaries.length === 0 ? (
-          <div className="flex flex-col items-center justify-center text-center gap-3 py-8">
-            <span className="text-3xl">🛰️</span>
-            <p className="text-sm font-semibold text-slate-500">Aún no has analizado ninguna parcela completa</p>
-            <button
-              onClick={() => onGoAnalizar('parcela')}
-              className="inline-flex items-center gap-2 rounded-xl px-4 py-2 font-semibold text-xs text-white transition-all active:scale-95"
-              style={{ background: 'linear-gradient(135deg, #7c3aed, #6d28d9)' }}
-            >
-              Analizar una parcela
-            </button>
-          </div>
-        ) : (
-          <div className="flex gap-4 overflow-x-auto pb-1 [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-slate-50 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-slate-300">
-            {parcelaSummaries.slice(0, 6).map((summary) => (
-              <ParcelMiniCard key={summary.id} summary={summary} isDark={isDark} onClick={() => onGoHistorial('parcelas')} />
-            ))}
-          </div>
-        )}
-      </div>
+      </section>
     </div>
   )
 }
@@ -1495,7 +1817,7 @@ function toHistoryItem(record) {
 
   return {
     id: record.id,
-    fecha: record.fecha,
+    fecha: apiDate(record.fecha),
     imagen: record.imagen_url,
     enfermedad: diseaseName,
     enfermedadLabel: DISEASE_LABELS[diseaseName] ?? diseaseName,
@@ -1504,155 +1826,10 @@ function toHistoryItem(record) {
     cultivo: 'Maíz',
     recomendaciones: '',
     xaiImage: record.grad_cam_url,
+    resultadoImage: record.resultado_url,
     affectedPercent: confidencePercent,
     estado: record.enfermedad?.clase_idx === 0 ? 'Sano' : 'Con enfermedad',
   }
-}
-
-// ── Acerca de ─────────────────────────────────────────────────────────────────
-function AcercaDe() {
-  const { isDark } = useTheme()
-  const techs = [
-    { name: 'React 18', role: 'Interfaz de usuario', color: '#06b6d4' },
-    { name: 'Vite 5', role: 'Bundler y build tool', color: '#646cff' },
-    { name: 'Tailwind CSS 4', role: 'Estilos utilitarios', color: '#06b6d4' },
-    { name: 'MIT-B1 + DeepLabV3+', role: 'Modelo de segmentación IA', color: '#16a34a' },
-    { name: 'Grad-CAM XAI', role: 'Explicabilidad del modelo', color: '#f59e0b' },
-    { name: 'FastAPI + PyTorch', role: 'Backend e inferencia', color: '#ef4444' },
-    { name: 'Render', role: 'Plataforma de despliegue', color: '#7c3aed' },
-    { name: 'Google OAuth 2.0', role: 'Autenticación segura', color: '#3b82f6' },
-  ]
-  const diseases = [
-    { name: 'Tizón del Maíz', pathogen: 'Exserohilum turcicum', color: '#f97316' },
-    { name: 'Roya', pathogen: 'Puccinia sorghi', color: '#f59e0b' },
-    { name: 'Mancha Blanca', pathogen: 'Phyllachora maydis', color: '#ef4444' },
-    { name: 'Cultivo Sano', pathogen: 'Sin patógeno detectado', color: '#22c55e' },
-  ]
-  const card = `rounded-2xl border shadow-sm p-6 ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`
-  const muted = isDark ? 'text-slate-400' : 'text-slate-500'
-  const heading = isDark ? 'text-slate-100' : 'text-slate-900'
-
-  return (
-    <div className="space-y-5 fade-up max-w-4xl">
-
-      {/* Hero */}
-      <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-white border-slate-200'}`}>
-        <div className="px-6 pt-8 pb-6">
-          <div className="flex items-center gap-4 mb-5">
-            <div className="w-14 h-14 rounded-2xl bg-emerald-500 flex items-center justify-center text-white text-2xl font-black shadow-lg shadow-emerald-500/30">A</div>
-            <div>
-              <h1 className={`text-2xl font-black ${heading}`}>AgroScan</h1>
-              <p className="text-sm text-emerald-600 font-semibold">UAV · Maíz · Inteligencia Artificial</p>
-            </div>
-          </div>
-          <p className={`text-sm leading-relaxed ${muted}`}>
-            AgroScan es un sistema web de diagnóstico fitosanitario para cultivos de maíz desarrollado como proyecto de investigación de la <strong className={heading}>Universidad Técnica del Norte</strong> (Ibarra, Ecuador). Utiliza imágenes capturadas por drones UAV y modelos de inteligencia artificial para detectar enfermedades foliares de forma rápida y precisa, apoyando la toma de decisiones de técnicos agrícolas y agricultores de la zona.
-          </p>
-        </div>
-        <div className={`grid grid-cols-3 border-t text-center divide-x ${isDark ? 'border-[#1e3048] divide-[#1e3048]' : 'border-slate-100 divide-slate-100'}`}>
-          {[
-            { label: 'Enfermedades detectadas', value: '3' },
-            { label: 'Modelo de IA', value: 'MIT-B1' },
-            { label: 'Universidad', value: 'UTN' },
-          ].map((s, i) => (
-            <div key={i} className="py-4 px-3">
-              <p className={`text-xl font-black ${heading}`}>{s.value}</p>
-              <p className={`text-xs mt-0.5 ${muted}`}>{s.label}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Propósito */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {[
-          { icon: '🌽', title: '¿Para quién es?', body: 'Diseñado para técnicos agrícolas e ingenieros agrónomos que realizan monitoreo de campo, así como para agricultores de Imbabura que desean identificar enfermedades en sus cultivos de maíz sin necesidad de laboratorios costosos ni largos tiempos de espera.' },
-          { icon: '🎯', title: '¿Qué resuelve?', body: 'El diagnóstico visual tradicional de enfermedades en maíz requiere experiencia especializada y es propenso a errores. AgroScan automatiza este proceso usando visión por computadora, reduciendo el tiempo de diagnóstico de días a segundos y aumentando la consistencia y precisión del resultado.' },
-          { icon: '🚁', title: '¿Cómo funciona?', body: 'El agricultor o técnico captura imágenes aéreas del cultivo con un drone UAV. La imagen se sube a la plataforma, el modelo de IA realiza una segmentación semántica píxel a píxel y genera un mapa de calor Grad-CAM que explica visualmente qué zonas determinaron el diagnóstico.' },
-          { icon: '📍', title: 'Contexto geográfico', body: 'Desarrollado y validado para las condiciones agroclimáticas de la provincia de Imbabura, Ecuador. Las enfermedades detectadas corresponden a las de mayor incidencia en la zona: Tizón, Roya y Mancha Blanca, patologías frecuentes en los valles de Ibarra, Urcuquí y Cotacachi.' },
-        ].map((item, i) => (
-          <div key={i} className={card}>
-            <div className="text-2xl mb-3">{item.icon}</div>
-            <h3 className={`font-bold text-sm mb-2 ${heading}`}>{item.title}</h3>
-            <p className={`text-xs leading-relaxed ${muted}`}>{item.body}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* Modelo de IA */}
-      <div className={card}>
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center">
-            <svg viewBox="0 0 24 24" fill="none" stroke="#15803d" strokeWidth="2" className="w-4 h-4"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
-          </div>
-          <h2 className={`font-bold ${heading}`}>Modelo de Inteligencia Artificial</h2>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className={`rounded-xl border p-4 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
-            <p className="text-xs font-bold text-emerald-600 uppercase tracking-wider mb-2">Arquitectura</p>
-            <p className={`font-black text-lg ${heading}`}>MIT-B1 + DeepLabV3+</p>
-            <p className={`text-xs mt-2 leading-relaxed ${muted}`}>El encoder <strong>Mix Transformer B1 (MIT-B1)</strong> es un transformer jerárquico preentrenado en ImageNet que extrae características visuales a múltiples escalas. El decoder <strong>DeepLabV3+</strong> realiza la segmentación semántica píxel a píxel para identificar zonas enfermas en la imagen.</p>
-          </div>
-          <div className={`rounded-xl border p-4 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
-            <p className="text-xs font-bold text-amber-600 uppercase tracking-wider mb-2">Explicabilidad (XAI)</p>
-            <p className={`font-black text-lg ${heading}`}>Grad-CAM</p>
-            <p className={`text-xs mt-2 leading-relaxed ${muted}`}><strong>Gradient-weighted Class Activation Mapping</strong> genera un mapa de calor que resalta las regiones de la imagen donde el modelo concentró su atención para el diagnóstico. Esto permite al técnico validar visualmente el resultado y aumentar la confianza en la decisión del sistema.</p>
-          </div>
-        </div>
-        <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: 'Tarea', value: 'Segmentación semántica' },
-            { label: 'Framework', value: 'PyTorch' },
-            { label: 'Clases', value: '4 (3 enf. + sano)' },
-            { label: 'Metodología', value: 'CRISP-DM' },
-          ].map((d, i) => (
-            <div key={i} className={`rounded-lg border p-3 text-center ${isDark ? 'bg-[#0e1929] border-[#2a3d55]' : 'bg-white border-slate-200'}`}>
-              <p className={`text-[10px] uppercase tracking-wider ${muted}`}>{d.label}</p>
-              <p className={`font-bold text-xs mt-1 ${heading}`}>{d.value}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Enfermedades */}
-      <div className={card}>
-        <h2 className={`font-bold mb-4 ${heading}`}>Enfermedades detectadas</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {diseases.map((d, i) => (
-            <div key={i} className={`rounded-xl border p-4 flex items-center gap-3 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
-              <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: d.color }} />
-              <div>
-                <p className={`font-bold text-sm ${heading}`}>{d.name}</p>
-                <p className={`text-xs italic ${muted}`}>{d.pathogen}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Stack tecnológico */}
-      <div className={card}>
-        <h2 className={`font-bold mb-4 ${heading}`}>Tecnologías utilizadas</h2>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {techs.map((t, i) => (
-            <div key={i} className={`rounded-xl border p-3 ${isDark ? 'bg-[#1a2a3a] border-[#2a3d55]' : 'bg-slate-50 border-slate-100'}`}>
-              <div className="w-2 h-2 rounded-full mb-2" style={{ background: t.color }} />
-              <p className={`font-bold text-xs ${heading}`}>{t.name}</p>
-              <p className={`text-[11px] mt-0.5 ${muted}`}>{t.role}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Footer UTN */}
-      <div className={`rounded-2xl border p-6 text-center ${isDark ? 'bg-[#162032] border-[#1e3048]' : 'bg-slate-50 border-slate-200'}`}>
-        <p className={`font-bold ${heading}`}>Universidad Técnica del Norte</p>
-        <p className={`text-sm mt-1 ${muted}`}>Facultad de Ingeniería en Ciencias Aplicadas · Ibarra, Ecuador</p>
-        <p className={`text-xs mt-3 ${muted}`}>Proyecto de Tesis · 2026 · Desarrollado con metodología CRISP-DM</p>
-      </div>
-
-    </div>
-  )
 }
 
 export default function App() {
@@ -1666,12 +1843,19 @@ export default function App() {
   const [userName, setUserName]   = useState('Usuario')
   const [userEmail, setUserEmail] = useState('')
   const [userRol, setUserRol]     = useState('agricultor')
+  const [userId, setUserId]       = useState(null)
+  const [userEspecialidad, setUserEspecialidad] = useState('')
   const [analizarMode, setAnalizarMode] = useState('individual')
   const isResearcher = normalizeRole(userRol) === 'investigador' || normalizeRole(userRol) === 'researcher'
   const isAdmin = normalizeRole(userRol) === 'admin'
   const [historialTab, setHistorialTab] = useState('individual')
   const [historialVisit, setHistorialVisit] = useState(0)
   const [preselectedParcelaId, setPreselectedParcelaId] = useState(null)
+  // Consultas a expertos: conversación a abrir (desde la campana o al enviar un análisis),
+  // resumen para el contador del menú y las conversaciones con novedades para la campana
+  const [consultaSel, setConsultaSel] = useState(null)
+  const [consultasResumen, setConsultasResumen] = useState(null)
+  const [consultasNovedades, setConsultasNovedades] = useState([])
   const weather = useWeather()
 
   const goToAnalizar = (mode = 'individual', parcelaId = null) => {
@@ -1687,6 +1871,12 @@ export default function App() {
     setPage('historial')
   }
 
+  // Abre la página de consultas con esa conversación seleccionada
+  const goToConsulta = (id) => {
+    setConsultaSel({ id, at: Date.now() })
+    setPage('consultas')
+  }
+
   // Opción activa de cada submenú del lateral (y título de la barra superior)
   const subTabs = { analizar: analizarMode, historial: historialTab }
 
@@ -1694,7 +1884,35 @@ export default function App() {
   // por otra vía (ej. la barra lateral) después de haberlo consumido.
   useEffect(() => {
     if (page !== 'analizar') setPreselectedParcelaId(null)
+    if (page !== 'consultas') setConsultaSel(null)
   }, [page])
+
+  // Novedades de las consultas cada 30 s (y al volver a la pestaña). Solo si hay alguna se pide
+  // la lista, para mostrar en la campana de quién son.
+  const refreshConsultas = useCallback(async () => {
+    try {
+      const { data } = await fetchConsultasResumen()
+      setConsultasResumen(data)
+      if (data?.consultas_con_novedad > 0) {
+        const { data: lista } = await fetchConsultas()
+        setConsultasNovedades((Array.isArray(lista) ? lista : []).filter((c) => c.no_leidos > 0 || c.nueva || c.dictamen_nuevo).slice(0, 5))
+      } else {
+        setConsultasNovedades([])
+      }
+    } catch { /* sin conexión: se reintenta en el siguiente ciclo */ }
+  }, [])
+
+  useEffect(() => {
+    if (!authenticated) return undefined
+    refreshConsultas()
+    const timer = setInterval(() => { if (!document.hidden) refreshConsultas() }, 30000)
+    const onVisible = () => { if (!document.hidden) refreshConsultas() }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [authenticated, refreshConsultas])
 
   useEffect(() => {
     let canceled = false
@@ -1717,6 +1935,10 @@ export default function App() {
         setUserName(meResponse.data.nombre)
         setUserEmail(meResponse.data.email ?? '')
         setUserRol(meResponse.data.rol ?? 'agricultor')
+        setUserId(meResponse.data.id ?? null)
+        setUserEspecialidad(meResponse.data.especialidad ?? '')
+        // El experto entra directo a sus consultas
+        if (normalizeRole(meResponse.data.rol) === 'experto') setPage((p) => (p === 'inicio' ? 'consultas' : p))
         const backendHistory = Array.isArray(historyResponse.data) ? historyResponse.data.map(toHistoryItem) : []
         setAnalysisHistory(backendHistory)
         setEnfermedades(Array.isArray(enfResponse.data) ? enfResponse.data : [])
@@ -1748,6 +1970,11 @@ export default function App() {
     setUserName('Usuario')
     setUserEmail('')
     setUserRol('agricultor')
+    setUserId(null)
+    setUserEspecialidad('')
+    setConsultaSel(null)
+    setConsultasResumen(null)
+    setConsultasNovedades([])
     setPage('inicio')
   }
 
@@ -1802,12 +2029,17 @@ export default function App() {
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
           userName={userName}
+          userEmail={userEmail}
           userRol={userRol}
           subTabs={subTabs}
           onSelectSub={(group, tab) => (group === 'historial' ? goToHistorial(tab) : goToAnalizar(tab))}
+          onLogout={handleLogout}
+          badges={{ consultas: consultasResumen?.consultas_con_novedad ?? 0 }}
         />
 
-        <div className="flex-1 lg:ml-60 flex flex-col min-h-screen">
+        {/* 190 px = barra lateral flotante (166) + sus márgenes (12 + 12) */}
+        {/* min-w-0: sin él, el carrusel de parcelas de Inicio ensanchaba toda la columna más allá de la pantalla */}
+        <div className="flex-1 min-w-0 lg:ml-[190px] flex flex-col min-h-screen">
           <Topbar
             page={page}
             subTabs={subTabs}
@@ -1819,29 +2051,43 @@ export default function App() {
             userRol={userRol}
             onLogout={handleLogout}
             weather={weather}
+            history={analysisHistory}
+            onGoHistorial={goToHistorial}
+            consultas={consultasNovedades}
+            onOpenConsulta={goToConsulta}
           />
 
-          <main className="flex-1 p-4 md:p-6 w-full max-w-6xl mx-auto">
+          <main className="flex-1 px-4 pb-4 pt-3 md:px-6 md:pb-6 w-full max-w-6xl mx-auto">
             {page === 'inicio' && (isResearcher ? (
               <ResearchHomePage setPage={setPage} apiStatus={apiStatus} history={analysisHistory} weather={weather} onGoAnalizar={goToAnalizar} onGoHistorial={goToHistorial} />
             ) : (
               <HomePage setPage={setPage} apiStatus={apiStatus} history={analysisHistory} weather={weather} onGoAnalizar={goToAnalizar} onGoHistorial={goToHistorial} />
             ))}
-            {page === 'analizar' && <Analizar onHistoryChange={syncHistory} onAnalysisSaved={refreshHistory} history={analysisHistory} enfermedades={enfermedades} mode={analizarMode} preselectedParcelaId={preselectedParcelaId} showPerformance={canSeeResearch(userRol)} />}
+            {page === 'analizar' && <Analizar onHistoryChange={syncHistory} onAnalysisSaved={refreshHistory} history={analysisHistory} enfermedades={enfermedades} mode={analizarMode} preselectedParcelaId={preselectedParcelaId} showPerformance={canSeeResearch(userRol)} onGoHistorial={goToHistorial} onGoEnfermedades={() => setPage('enfermedades')} />}
             {page === 'historial' && <Historial key={historialVisit} history={analysisHistory} onHistoryChange={syncHistory} tab={historialTab} onGoAnalizarParcela={(id) => goToAnalizar('parcela', id)} onGoAnalizar={(mode) => goToAnalizar(mode)} />}
-            {page === 'enfermedades' && <Enfermedades />}
+            {page === 'enfermedades' && <Enfermedades onGoAnalizar={() => goToAnalizar('individual')} />}
             {page === 'mercado' && <Mercado />}
             {page === 'perfil' && (
               <Profile
                 userName={userName}
                 userEmail={userEmail}
                 userRol={userRol}
+                userEspecialidad={userEspecialidad}
                 onNameChange={(name) => setUserName(name)}
+                onEspecialidadChange={setUserEspecialidad}
               />
             )}
             {page === 'acerca' && <AcercaDe />}
             {page === 'usuarios' && isAdmin && <Usuarios />}
             {page === 'modelo' && canSeeResearch(userRol) && <ModeloIA />}
+            {page === 'consultas' && (
+              <Consultas
+                me={{ id: userId, rol: normalizeRole(userRol), nombre: userName }}
+                seleccion={consultaSel}
+                onNovedades={refreshConsultas}
+                onGoHistorial={() => goToHistorial('individual')}
+              />
+            )}
           </main>
         </div>
       </div>
