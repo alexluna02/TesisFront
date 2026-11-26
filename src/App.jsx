@@ -9,6 +9,7 @@ import Profile from './Profile.jsx'
 import Usuarios from './Usuarios.jsx'
 import ModeloIA from './ModeloIA.jsx'
 import Consultas from './Consultas.jsx'
+import CalendarioLunar from './CalendarioLunar.jsx'
 import { affectedFromRecord, severityFromRecord, SEVERITY_PALETTE } from './severity.js'
 import Login from './Login.jsx'
 import heroDron from './Imagenes/hero-dron.webp'
@@ -74,6 +75,11 @@ const IcoUsers = () => (
 const IcoModel = () => (
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-[18px] h-[18px]">
     <path strokeLinecap="round" strokeLinejoin="round" d="M4 19h16M7 16V10m5 6V6m5 10v-4"/>
+  </svg>
+)
+const IcoLuna = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-[18px] h-[18px]">
+    <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/>
   </svg>
 )
 const IcoChat = () => (
@@ -244,6 +250,7 @@ const NAV = [
   { id: 'analizar',     label: 'Analizar',         Icon: IcoScan,    children: ANALIZAR_SUBNAV },
   { id: 'historial',    label: 'Historial',        Icon: IcoHistory, children: HISTORIAL_SUBNAV },
   { id: 'consultas',    label: 'Consultas',        Icon: IcoChat    },
+  { id: 'luna',         label: 'Calendario Lunar', Icon: IcoLuna    },
   { id: 'enfermedades', label: 'Enfermedades',     Icon: IcoDisease },
   { id: 'mercado',      label: 'Mercado',          Icon: IcoMarket  },
   { id: 'acerca',       label: 'Acerca de',        Icon: IcoInfo    },
@@ -560,6 +567,7 @@ const TOPBAR_TITLES = {
   modelo:       'Ficha del modelo',
   perfil:       'Mi perfil',
   consultas:    'Consultas',
+  luna:         'Calendario Lunar',
 }
 
 const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1)
@@ -2080,6 +2088,7 @@ export default function App() {
             {page === 'acerca' && <AcercaDe />}
             {page === 'usuarios' && isAdmin && <Usuarios />}
             {page === 'modelo' && canSeeResearch(userRol) && <ModeloIA />}
+            {page === 'luna' && <CalendarioLunar />}
             {page === 'consultas' && (
               <Consultas
                 me={{ id: userId, rol: normalizeRole(userRol), nombre: userName }}
